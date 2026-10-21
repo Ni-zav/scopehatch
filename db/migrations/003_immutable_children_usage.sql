@@ -139,8 +139,8 @@ CREATE TABLE IF NOT EXISTS scopehatch.model_usage_events (
   provider text NOT NULL,
   model text NOT NULL,
   status text NOT NULL CHECK (status IN ('reported','unknown')),
-  input_tokens bigint CHECK (input_tokens >= 0),
-  output_tokens bigint CHECK (output_tokens >= 0),
+  input_tokens bigint CHECK (input_tokens BETWEEN 0 AND 9007199254740991),
+  output_tokens bigint CHECK (output_tokens BETWEEN 0 AND 9007199254740991),
   request_id text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id,id),
@@ -148,6 +148,9 @@ CREATE TABLE IF NOT EXISTS scopehatch.model_usage_events (
     REFERENCES scopehatch.projects(tenant_id,id),
   FOREIGN KEY (tenant_id,actor_id)
     REFERENCES scopehatch.memberships(tenant_id,principal_id),
+  CONSTRAINT usage_reported_has_measurement CHECK (
+    status <> 'reported' OR input_tokens IS NOT NULL OR output_tokens IS NOT NULL
+  ),
   CONSTRAINT usage_unknown_is_null CHECK (
     status <> 'unknown' OR (input_tokens IS NULL AND output_tokens IS NULL)
   )
