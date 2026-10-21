@@ -48,7 +48,7 @@ test('deterministic quote, separate reviewer approval and approved-only export',
 test('self-approval rejected even for actor with owner and reviewer role', async () => {
   const actor: Principal = { id: 'self', tenantId: 'a', roles: ['owner', 'reviewer'] };
   const service = setup();
-  const { body } = await service.createProject(actor, 'p', { title: 'Site', brief: 'Brief' }, 'req');
+  const { body } = await service.createProject(actor, 'p', { title: 'Site', brief: 'Two exterior views' }, 'req');
   const id = (body as any).project.id;
   await service.createScope(actor, id, 's', data, 'req');
   await service.createEstimate(actor, id, 'e', pair, 'req');
