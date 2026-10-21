@@ -81,6 +81,7 @@ export class DemoApi implements ScopehatchApi {
       if (!service) blockers.push({ code: 'UNPRICED_SERVICE', detail: item.serviceId })
       if (item.quantity === null) blockers.push({ code: 'UNKNOWN_QUANTITY', detail: item.serviceId })
       if (item.source === 'brief' && !item.evidence.trim()) blockers.push({ code: 'MISSING_EVIDENCE', detail: item.serviceId })
+      else if (item.source === 'brief' && !scope.brief.includes(item.evidence)) blockers.push({ code: 'EVIDENCE_NOT_IN_BRIEF', detail: item.serviceId })
       const subtotal = item.quantity !== null && service ? item.quantity * service.unitPriceMinor : null
       if (subtotal !== null && !Number.isSafeInteger(subtotal)) fail(422, 'MONEY_OVERFLOW', 'Price exceeds the supported integer range.')
       return { ...item, unitPriceMinor: service?.unitPriceMinor ?? null, subtotalMinor: subtotal }

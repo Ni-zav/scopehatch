@@ -79,7 +79,7 @@ After dependencies and Chromium are installed, start `npm run dev` and take a lo
 - No actual OIDC session integration or production authorization verification inside the frontend (correctly delegated to server and integration workstream).
 - Fixture storage is in-memory, deterministic and isolated per reload. Its personas are not real JWTs.
 - There is no project-list endpoint, no catalog management endpoint, no review-rejection endpoint and no historical export endpoint in Sprint 01. UI does not invent them.
-- Source citations are free-text quotes/manual notes; the backend is responsible for authoritative validation.
+- The fixture blocks brief excerpts not present in the original client text and the UI requires exact excerpts. The production server remains responsible for authoritative evidence verification.
 - No browser/TypeScript test outcome should be claimed unless the corresponding command has been executed.
 
 Related contract: `contracts/sprint-01-interface.md`; issue: https://github.com/Ni-zav/scopehatch/issues/4.

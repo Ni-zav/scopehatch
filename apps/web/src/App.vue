@@ -57,7 +57,7 @@ const hasProject = computed(() => view.value === 'workbench' && Boolean(snapshot
 const localInvalid = computed(() => lines.value.some(l => {
   const q = l.quantity.trim()
   return !l.serviceId || (q !== '' && (!Number.isSafeInteger(Number(q)) || Number(q) < 1)) ||
-    (l.source === 'brief' && !l.evidence.trim())
+    (l.source === 'brief' && (!l.evidence.trim() || !(snapshot.value?.project.brief ?? '').toLowerCase().includes(l.evidence.trim().toLowerCase())))
 }))
 const status = computed(() => {
   if (draftDirty.value) return { label: 'Unsaved changes', tone: 'warning' }
@@ -169,14 +169,15 @@ async function newProject() {
 async function saveScope() {
   if (localInvalid.value) { error.value = 'Fix invalid quantities and add brief citations before saving.'; return }
   if (!currentId.value || !catalog.value) return
+  const targetId = currentId.value
   await run(async () => {
     const deliverables: Deliverable[] = lines.value.map(l => ({
       serviceId: l.serviceId, quantity: l.quantity.trim() === '' ? null : Number(l.quantity),
       evidence: l.evidence.trim(), source: l.source
     }))
     const unknownList = unknowns.value.split('\n').map(s => s.trim()).filter(Boolean)
-    const next = await api.createScope(currentId.value, { deliverables, unknowns: unknownList })
-    await api.estimate(currentId.value, { scopeRevision: next.revision, catalogVersion: catalog.value!.version })
+    const next = await api.createScope(targetId, { deliverables, unknowns: unknownList })
+    await api.estimate(targetId, { scopeRevision: next.revision, catalogVersion: catalog.value!.version })
     await reload('Revision ' + next.revision + ' saved and recalculated. Previous approvals do not transfer.')
   })
 }
@@ -243,10 +244,10 @@ onMounted(async () => {
       <div class="brand"><div class="brand-mark" aria-hidden="true">S<span>·</span></div><div><strong>Scopehatch</strong><small>Operator workbench</small></div></div>
       <div class="sidebar-section">
         <p class="eyebrow">WORKSPACE</p>
-        <button class="nav-link" :class="{ selected: hasProject }" type="button" @click="view = 'workbench'">
+        <button class="nav-link" :class="{ selected: hasProject }" type="button" :disabled="busy" @click="view = 'workbench'">
           <span aria-hidden="true">▤</span> Current project
         </button>
-        <button class="nav-link" :class="{ selected: view === 'new' }" type="button" @click="view = 'new'; clearFeedback()">
+        <button class="nav-link" :class="{ selected: view === 'new' }" type="button" :disabled="busy" @click="view = 'new'; clearFeedback()">
           <span aria-hidden="true">＋</span> New brief
         </button>
       </div>
@@ -256,7 +257,7 @@ onMounted(async () => {
           <label class="sr-only" for="project-id">Project ID</label>
           <div class="project-jump">
             <input id="project-id" v-model="projectIdInput" autocomplete="off" placeholder="Project ID" required />
-            <button type="submit" aria-label="Open project by ID" :disabled="loading">→</button>
+            <button type="submit" aria-label="Open project by ID" :disabled="loading || busy">→</button>
           </div>
         </form>
         <p class="side-help">Project lists are not part of Sprint 01's API. Open a known ID.</p>
@@ -369,7 +370,7 @@ onMounted(async () => {
                 <button class="button primary" type="button" :disabled="busy || !canEdit || !catalog || localInvalid || (!draftDirty && Boolean(scope))" @click="saveScope">
                   {{ busy ? 'Working…' : scope ? 'Save new revision & estimate →' : 'Save first scope & estimate →' }}
                 </button>
-                <p v-if="localInvalid" class="field-error" role="status">Fix invalid quantities and add evidence for each brief-sourced line.</p>
+                <p v-if="localInvalid" class="field-error" role="status">Fix invalid quantities and use an exact excerpt for every brief-sourced line.</p>
               </div>
             </section>
           </div>

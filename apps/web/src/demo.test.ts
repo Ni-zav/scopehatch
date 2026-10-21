@@ -75,7 +75,12 @@ describe('deterministic demo fixture — NOT production auth', () => {
     })
     const quote = await api.estimate(fixtureProjectId, { scopeRevision: scope.revision, catalogVersion: 1 })
     expect(quote.blockers.map(b => b.code)).toContain('MISSING_EVIDENCE')
-    await expect(api.submitReview(fixtureProjectId, { scopeRevision: scope.revision, catalogVersion: 1 }))
+    const mismatch = await api.createScope(fixtureProjectId, { deliverables: [
+      { serviceId: 'interior-view', quantity: 1, source: 'brief', evidence: 'fabricated client quote' }
+    ], unknowns: [] })
+    const mismatchEstimate = await api.estimate(fixtureProjectId, { scopeRevision: mismatch.revision, catalogVersion: 1 })
+    expect(mismatchEstimate.blockers.map(b => b.code)).toContain('EVIDENCE_NOT_IN_BRIEF')
+    await expect(api.submitReview(fixtureProjectId, { scopeRevision: mismatch.revision, catalogVersion: 1 }))
       .rejects.toMatchObject({ code: 'BLOCKED_ESTIMATE' })
   })
   it('rejects unsafe amounts and quantities, not silently rounding money', async () => {
