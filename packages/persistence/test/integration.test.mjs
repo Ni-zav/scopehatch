@@ -182,6 +182,60 @@ test('interrupted approval rolls back both decision and audit', { skip: !enabled
   assert.ok(!audits.items.some(event => event.action === 'review.approved'));
 });
 
+test('approved export is bound to exactly one immutable ready estimate', { skip: !enabled }, async () => {
+  const projectId = randomUUID();
+  const review = await store.withPrincipal(a, async tx => {
+    await tx.createProject({ id: projectId, title: 'Approved scenario', brief: 'two images' });
+    const scope = await tx.createScope({
+      projectId, deliverables: [
+        { serviceId: 'render', quantity: 2, evidence: 'two images', source: 'brief' }
+      ]
+    });
+    const quote = await tx.createEstimate({
+      projectId, scopeRevision: scope.revision, catalogVersion: 1
+    });
+    return tx.submitReview({ projectId, estimateRevision: quote.revision });
+  });
+  assert.equal(review.state, 'pending');
+  const approved = await store.withPrincipal(reviewerA, tx => tx.approveReview({
+    projectId, reviewId: review.id
+  }));
+  assert.equal(approved.state, 'approved');
+  assert.equal(approved.approvedBy, reviewerA.id);
+  const exported = await store.withPrincipal(a, tx => tx.exportApproved(projectId));
+  assert.equal(exported.totalMinor, 400000);
+  assert.match(exported.markdown, /Approved by: a-reviewer/);
+  const view = await store.withPrincipal(a, tx => tx.getProject(projectId));
+  assert.equal(view.status, 'approved');
+});
+
+test('concurrent scope replacement and approval cannot export a stale quote', { skip: !enabled }, async () => {
+  const projectId = randomUUID();
+  const review = await store.withPrincipal(a, async tx => {
+    await tx.createProject({ id: projectId, title: 'Race scenario', brief: 'one image' });
+    const scope = await tx.createScope({
+      projectId, deliverables: [{ serviceId: 'render', quantity: 1, evidence: 'one image', source: 'brief' }]
+    });
+    const quote = await tx.createEstimate({ projectId, scopeRevision: scope.revision, catalogVersion: 1 });
+    return tx.submitReview({ projectId, estimateRevision: quote.revision });
+  });
+  const operations = await Promise.allSettled([
+    store.withPrincipal(a, tx => tx.createScope({
+      projectId, deliverables: [
+        { serviceId: 'render', quantity: 2, evidence: 'two images', source: 'brief' }
+      ]
+    })),
+    store.withPrincipal(reviewerA, tx => tx.approveReview({
+      projectId, reviewId: review.id
+    }))
+  ]);
+  assert.equal(operations[0].status, 'fulfilled', 'replacement must append successfully');
+  await assert.rejects(
+    () => store.withPrincipal(reviewerA, tx => tx.exportApproved(projectId)),
+    { code: 'STALE_REVISION' }
+  );
+});
+
 test('a new intake invalidates a previously submitted review', { skip: !enabled }, async () => {
   await store.withPrincipal(a, tx => tx.createIntake({
     projectId: 'a-demo', brief: 'now the requirement is different'
