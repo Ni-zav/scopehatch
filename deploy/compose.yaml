@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-scopehatch}
-      POSTGRES_USER: ${POSTGRES_USER:-scopehatch}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-scopehatch_admin}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       PGDATA: /var/lib/postgresql/data/pgdata
     secrets: [postgres_password]
@@ -66,6 +66,8 @@ services:
 secrets:
   postgres_password:
     file: ./secrets/postgres_password
+  postgres_runtime_password:
+    file: ./secrets/postgres_runtime_password
 volumes:
   postgres_data:
   ollama_models:
