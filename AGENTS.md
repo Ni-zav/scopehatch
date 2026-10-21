@@ -1,6 +1,6 @@
 # AGENTS.md — Scopehatch contributor and coding-agent contract
 
-**Current status:** planning pack. Do not claim features exist because specs mention them. Never create/push repos or deploy without explicit user request. Read README then docs/01, 03, 04, 05, 06, 09 before coding.
+**Current status:** product docs and a pure domain-kernel prototype; API, DB, hosted models, Vue UI and production identity are not implemented. Do not claim features exist because specs mention them. Never create/push repos or deploy without explicit user request. Read README then docs/01, 03, 04, 05, 06, 09 before coding.
 
 ## North star
 
@@ -30,4 +30,4 @@ Do not build 100 model adapters, generalized distributed scheduler, full CRM, au
 
 ## Packaging and license
 
-Plan for Apache-2.0 core, pending license audit. Separate community OSS and hosted operational convenience without intentionally weakening OSS security primitives. User will create `Ni-zav/scopehatch` later.
+Plan for Apache-2.0 core, pending license audit. Separate community OSS and hosted operational convenience without intentionally weakening OSS security primitives. Repository: `Ni-zav/scopehatch` (created 2026-10-21). Apache-2.0 text in LICENSE.
