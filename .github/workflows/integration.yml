@@ -80,7 +80,7 @@ jobs:
           printf '%s' 'scopehatch_integration_admin_ci_pw_2026' > deploy/secrets/postgres_password
           printf '%s' 'scopehatch_integration_runtime_ci_pw_2026' > deploy/secrets/postgres_runtime_password
           sudo chown 1000:1000 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
-          chmod 0400 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+          sudo chmod 0400 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
           cp .env.example .env
           sed -i 's#https://issuer.example.invalid/#https://identity.integration.invalid/#' .env
           sed -i 's#https://issuer.example.invalid/.well-known/jwks.json#https://identity.integration.invalid/jwks.json#' .env
