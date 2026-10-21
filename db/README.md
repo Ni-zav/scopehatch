@@ -19,6 +19,7 @@ In a fresh dedicated database, from the repository root:
 
     psql "$PG_ADMIN_URL" -v ON_ERROR_STOP=1 -f db/migrations/001_initial.sql
     psql "$PG_ADMIN_URL" -v ON_ERROR_STOP=1 -f db/migrations/002_quote_integrity.sql
+    psql "$PG_ADMIN_URL" -v ON_ERROR_STOP=1 -f db/migrations/003_immutable_children_usage.sql
 
 Provision the restricted app login through a protected administrator session:
 
@@ -76,8 +77,10 @@ request. All tenant-owned tables have tenant-scoped RLS. Nearly all have
 FORCE RLS, and composite foreign keys prevent reference mixing across tenants.
 The application role has no INSERT/UPDATE/DELETE grants on memberships.
 
-Catalogs, intakes, scopes, deliverables, estimates, idempotency records
-and audit are append-only by trigger. Reviews are pending -> approved only;
+Catalogs, intakes, scopes, deliverables, estimates, idempotency records,
+usage and audit are append-only by trigger. Fixed child counts and creation
+transaction IDs prevent direct SQL from appending a new service or deliverable
+to an existing version even if its line count is incomplete. Reviews are pending -> approved only;
 review transitions guard reviewer role, separation of duties, exact immutable
 estimate binding, latest intake, scope, catalog, and estimate identity.
 Tenant-then-project locks serialize revision creation, quote creation and
@@ -135,8 +138,12 @@ migration. Never automatically DROP SCHEMA on a live database.
    approved exact-revision export adapter. Export produces Markdown but never
    sends anything. Project status is derived from bound records, not mutable
    without review.
-5. Wire package install and test commands into the root workspace and CI
+5. Governance can record provider token usage through recordUsage and listUsage.
+   Unknown usage remains null; no dollar spend reservation/settlement is
+   implemented by this package. Provider provenance validation is the caller's
+   responsibility.
+6. Wire package install and test commands into the root workspace and CI
    from a separate integrator PR. Provision least-privilege DB login, demo
    identity, migrations, secret management and a real Postgres test service.
-6. This work owns only packages/persistence and db. Do not change domain,
+7. This work owns only packages/persistence and db. Do not change domain,
    API, shared contracts, CI, or another worker's files for integration.
