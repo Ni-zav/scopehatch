@@ -1,4 +1,4 @@
-import type { AuditPage, Catalog, Deliverable, Estimate, Project, ProposalExport, Review, Scope, ScopehatchApi, Snapshot } from './types'
+import type { AuditPage, Catalog, Deliverable, Estimate, Project, ProposalExport, Review, Scope, ScopehatchApi, Snapshot, SuggestionResponse } from './types'
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string, readonly requestId?: string) {
@@ -57,6 +57,10 @@ export function createHttpApi({ baseUrl, getAccessToken, getWorkspaceId, fetchIm
     async submitReview(id, body) { return (await request<{ review: Review }>('POST', idPath(id) + '/reviews', body)).review },
     async approve(id, body) { return (await request<{ review: Review }>('POST', idPath(id) + '/approve', body)).review },
     export(id, revision) { return request<ProposalExport>('GET', idPath(id) + '/exports/' + encodeURIComponent(revision)) },
+    suggestions(id, revision) {
+      return request<SuggestionResponse>('POST', idPath(id) + '/suggestions',
+        revision === undefined ? {} : {scopeRevision:revision})
+    },
     audit(id, cursor, limit = 30) {
       const params = new URLSearchParams({ limit: String(limit) })
       if (cursor) params.set('cursor', cursor)

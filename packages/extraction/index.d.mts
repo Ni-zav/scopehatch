@@ -44,6 +44,7 @@ export function createExtractor(options: { provider: ExtractionProvider; timeout
 export function createOpenAICompatibleProvider(options: {
   endpoint: string; model: string; apiKey?: string; allowedHosts: string[];
   provider?: string; fetchImpl?: typeof fetch; jsonMode?: boolean; maxOutputTokens?: number;
+  allowDockerOllamaHttp?: boolean;
 }): ExtractionProvider;
 export interface FixtureCase { requestId: string; brief: string; output: string | {
   suggestedDeliverables: SuggestedDeliverable[]; unknowns: string[];

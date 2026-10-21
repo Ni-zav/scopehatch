@@ -67,7 +67,13 @@ jobs:
       - name: Assert SQL isolation, write authorization and approval atomics
         run: npm run test:db
       - name: Postgres and Fastify integration checks
-        run: node --experimental-transform-types --test apps/api/test/postgres.test.ts
+        run: |
+          node --experimental-transform-types --test apps/api/test/postgres.test.ts
+          node --experimental-transform-types --test apps/api/test/inference.test.ts
+      - name: Browser OIDC PKCE two-actor live PostgreSQL workflow
+        run: |
+          npx playwright install --with-deps chromium
+          node --experimental-transform-types apps/api/test/browser-oidc-e2e.ts
 
   compose-smoke:
     runs-on: ubuntu-latest

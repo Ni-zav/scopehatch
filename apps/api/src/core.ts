@@ -75,7 +75,8 @@ export class ApplicationService {
       const latestScope = await tx.getLatestScope(id);
       const catalogs = await tx.listCatalogs();
       const latestEstimate = latestScope && catalogs[0] ? await tx.getEstimate(id, latestScope.revision, catalogs[0].version) : null;
-      const review = latestScope && catalogs[0] ? await tx.getReview(id, latestScope.revision, catalogs[0].version) : null;
+      const currentReview = latestScope && catalogs[0] ? await tx.getReview(id, latestScope.revision, catalogs[0].version) : null;
+      const review = currentReview ?? await tx.getLatestReview?.(id) ?? null;
       return { project, ...(latestScope && { latestScope }), ...(latestEstimate && { latestEstimate }), ...(review && { review }) };
     });
   }
@@ -193,13 +194,25 @@ export function normalizeError(error: unknown): ApiError {
       STALE_ESTIMATE: 409, STALE_REVIEW: 409, STALE_REVISION: 409,
       CONFLICT: 409, IDEMPOTENCY_CONFLICT: 409, ALREADY_EXISTS: 409,
       NOT_FOUND: 404, EVIDENCE_NOT_IN_BRIEF: 422,
+      BUDGET_NOT_CONFIGURED: 503, NO_ELIGIBLE_PROVIDER: 503,
+      QUOTA_EXCEEDED: 429, INFERENCE_IN_PROGRESS: 409,
+      PROVIDER_FAILED: 503, PROVIDER_UNAVAILABLE: 503,
+      PROVIDER_AUTH: 503, INVALID_PROVIDER_CONFIG: 503,
+      INVALID_MODEL_OUTPUT: 502, UNVERIFIABLE_EVIDENCE: 502,
+      UNVERIFIABLE_QUANTITY: 502, OUTPUT_TOO_LARGE: 502,
+      TIMEOUT: 504, INVALID_USAGE: 422, INVALID_TRANSITION: 409,
       APPROVAL_REQUIRED: 409,
       BLOCKED_ESTIMATE: 409, SELF_APPROVAL: 403, FORBIDDEN: 403, TENANT_MISMATCH: 404
     };
     if (statuses[code]) return new ApiError(code, statuses[code],
       statuses[code] === 404 ? 'Resource not found' :
       statuses[code] === 403 ? 'Operation forbidden' :
-      statuses[code] === 422 ? 'Invalid request data' : 'Operation conflicts with current state');
+      statuses[code] === 422 ? 'Invalid request data' :
+      statuses[code] === 429 ? 'Inference budget exceeded' :
+      statuses[code] === 503 ? 'Governed inference unavailable' :
+      statuses[code] === 502 ? 'Inference response failed evidence validation' :
+      statuses[code] === 504 ? 'Inference provider timed out; spending is being reconciled' :
+      'Operation conflicts with current state');
   }
   return new ApiError('INTERNAL_ERROR', 500, 'Internal server error');
 }

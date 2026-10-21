@@ -2,10 +2,14 @@ import { buildServer } from './server.ts';
 import { Pool } from 'pg';
 import { assertRestrictedPgPool, createPgPorts } from './postgres.ts';
 import { oidcVerifier } from './auth.ts';
+import { createInferenceGateway } from './inference.ts';
 import type { MembershipPort, PersistencePort } from './ports.ts';
+import type { Principal } from './ports.ts';
 
 /** No memory fallback is permitted: missing production adapters must fail startup. */
-export async function start(deps: { store: PersistencePort; memberships: MembershipPort }) {
+export async function start(deps: {store:PersistencePort;memberships:MembershipPort;
+  suggestions?: {suggest(principal:Principal,projectId:string,key:string,requestId:string,scopeRevision?:number):Promise<{status:number;body:unknown}>};
+}) {
   const issuer = process.env.OIDC_ISSUER;
   const audience = process.env.OIDC_AUDIENCE;
   const jwksUrl = process.env.OIDC_JWKS_URI;
@@ -23,7 +27,8 @@ if (process.argv[1] && /\/index\.(?:js|ts)$/.test(process.argv[1])) {
     const pool = new Pool({ connectionString, max: 12 });
     try {
       await assertRestrictedPgPool(pool);
-      const server = await start(createPgPorts(pool));
+      const ports=createPgPorts(pool);
+      const server = await start({...ports,suggestions:createInferenceGateway(pool,ports.store)});
       for (const signal of ['SIGINT', 'SIGTERM']) {
         process.once(signal, () => { void server.close().finally(() => pool.end()); });
       }

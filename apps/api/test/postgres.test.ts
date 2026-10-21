@@ -72,6 +72,9 @@ test('signed HTTP workflow uses restricted real PostgreSQL and independent appro
   assert.equal(estimate.estimate.totalMinor,400000);
   await expect(409,'GET',prefix+'/exports/1',operator);
   await expect(201,'POST',prefix+'/reviews',operator,pair,uniq+'-review1');
+  const reviewerSnapshot=await expect(200,'GET',prefix,reviewer);
+  assert.equal(reviewerSnapshot.project.title,'Signed workflow '+uniq);
+  assert.equal(reviewerSnapshot.review.state,'pending');
   await expect(403,'POST',prefix+'/approve',operator,pair,uniq+'-self');
   const approval=await expect(200,'POST',prefix+'/approve',reviewer,pair,uniq+'-approve1');
   assert.equal(approval.review.approvedBy,'a-reviewer');

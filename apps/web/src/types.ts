@@ -29,7 +29,19 @@ export interface AuditEvent {
   objectRevision?: number; requestId?: string; [key: string]: unknown
 }
 export interface AuditPage { items: AuditEvent[]; nextCursor: string | null }
+export interface SuggestedDeliverable {
+  serviceId: string
+  quantity: number | null
+  evidence: {start:number;end:number;quote:string} | null
+}
+export interface SuggestionResponse {
+  suggestion:{ suggestedDeliverables:SuggestedDeliverable[]; unknowns:string[] }
+  provenance:{ source:string; offsetEncoding:string; promptVersion:string;schemaVersion:string;requestId:string;evidenceVerified:boolean }
+  model:string
+  usage:{status:'reported'|'unknown';inputTokens?:number;outputTokens?:number}
+}
 export interface ScopehatchApi {
+  suggestions?(id:string,revision?:number):Promise<SuggestionResponse>
   catalogs(): Promise<Catalog[]>
   createProject(body: { title: string; brief: string }): Promise<Project>
   project(id: string): Promise<Snapshot>

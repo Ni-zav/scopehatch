@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ApiError, createHttpApi } from './api'
 import { beginSignIn, finishSignIn, getAccessToken, isSignedIn, oidcConfigured, signOut } from './oidc'
 import { DemoApi, fixtureProjectId, type FixturePersona } from './demo'
-import type { AuditEvent, Catalog, Deliverable, ProposalExport, ScopehatchApi, Snapshot } from './types'
+import type { AuditEvent, Catalog, Deliverable, ProposalExport, ScopehatchApi, Snapshot, SuggestionResponse } from './types'
 
 type EditableLine = { key: number; serviceId: string; quantity: string; evidence: string; source: 'brief' | 'manual' }
 const isDemo = import.meta.env.VITE_SCOPEHATCH_DEMO === 'true'
@@ -39,6 +39,8 @@ const events = ref<AuditEvent[]>([])
 const cursor = ref<string | null>(null)
 const proposal = ref<ProposalExport | null>(null)
 const proposalBusy = ref(false)
+const suggestionBusy = ref(false)
+const suggestion = ref<SuggestionResponse | null>(null)
 let rowKey = 0
 
 const catalog = computed(() => catalogs.value[0])
@@ -131,6 +133,7 @@ async function loadProject(id: string) {
     snapshot.value = result
     view.value = 'workbench'
     proposal.value = null
+    suggestion.value = null
     hydrateDraft()
     await loadTimeline()
   } catch (cause) { showError(cause) }
@@ -142,6 +145,7 @@ async function reload(message = '') {
   snapshot.value = result
   hydrateDraft()
   proposal.value = null
+  suggestion.value = null
   await loadTimeline()
   notice.value = message
 }
@@ -170,6 +174,49 @@ async function newProject() {
     await loadProject(project.id)
     notice.value = 'Original brief saved. Add scoped deliverables to begin.'
   })
+}
+async function requestSuggestions() {
+  if(!currentId.value || !api.suggestions || draftDirty.value)return
+  clearFeedback()
+  suggestion.value=null
+  suggestionBusy.value=true
+  try {
+    const result=await api.suggestions(currentId.value,scope.value?.revision)
+    // A suggestion is advisory. Never mutate an approved record or catalog here.
+    for(const item of result.suggestion.suggestedDeliverables){
+      if(!catalog.value?.services.some(x=>x.id===item.serviceId))
+        throw new ApiError(422,'UNTRUSTED_SUGGESTION','The suggested service is absent from the trusted catalog.')
+      if(item.evidence){
+        const brief=snapshot.value?.project.brief ?? ''
+        if(brief.slice(item.evidence.start,item.evidence.end)!==item.evidence.quote)
+          throw new ApiError(422,'UNTRUSTED_SUGGESTION','The suggested evidence does not match the original brief.')
+      }
+    }
+    suggestion.value=result
+  }catch(cause){showError(cause)}
+  finally{suggestionBusy.value=false}
+}
+function applySuggestionsToDraft(){
+  if(!suggestion.value||draftDirty.value||!catalog.value||!snapshot.value)return
+  const source=snapshot.value.project.brief
+  const accepted=suggestion.value.suggestion.suggestedDeliverables.map(item=>{
+    const evidence=item.evidence
+    const quote=evidence && source.slice(evidence.start,evidence.end)===evidence.quote
+      ? evidence.quote : null
+    return {
+      key:++rowKey,serviceId:item.serviceId,
+      quantity:quote && item.quantity!==null ? String(item.quantity) : '',
+      evidence:quote??'AI suggestion without verifiable source evidence — confirm manually',
+      source:quote?'brief' as const:'manual' as const
+    }
+  })
+  if(!accepted.length)return
+  // Replaces only local unsaved draft on an explicit operator action.
+  lines.value=accepted
+  unknowns.value=suggestion.value.suggestion.unknowns.join('\n')
+  suggestion.value=null
+  edit()
+  notice.value='Suggestion copied to your local draft. Verify it and save a new immutable revision; no approval transferred.'
 }
 async function saveScope() {
   if (localInvalid.value) { error.value = 'Fix invalid quantities and add brief citations before saving.'; return }
@@ -363,6 +410,26 @@ onMounted(async () => {
             <li :class="{ done: Boolean(pending || approved) }"><span>03</span> Review</li>
             <li :class="{ done: Boolean(approved) }"><span>04</span> Proposal</li>
           </ol>
+          <section v-if="!isDemo && authenticated" class="surface-card" aria-labelledby="suggestion-heading">
+            <div class="panel-heading"><div><p class="overline">OPTIONAL / GOVERNED INFERENCE</p><h2 id="suggestion-heading">Brief suggestions</h2></div><span class="mini-tag">Not an approval</span></div>
+            <p class="muted">Suggestions require the tenant's allowed model and reserved budget. Evidence is verified against the original brief. The model cannot set catalog prices or approve a proposal.</p>
+            <button class="button secondary" type="button" :disabled="busy || suggestionBusy || draftDirty || !currentId" @click="requestSuggestions">
+              {{ suggestionBusy ? 'Checking model policy…' : 'Suggest from original brief' }}
+            </button>
+            <p v-if="draftDirty" class="dirty-note">Save or discard unsaved changes before requesting a fresh suggestion.</p>
+            <div v-if="suggestion" class="blocker-list">
+              <h3>Advisory output · {{ suggestion.model }} · usage {{ suggestion.usage.status }}</h3>
+              <ul>
+                <li v-for="(item,index) in suggestion.suggestion.suggestedDeliverables" :key="index">
+                  <strong>{{ serviceName(item.serviceId) }} × {{ item.quantity ?? '?' }}</strong>
+                  <span>{{ item.evidence?.quote ?? 'No exact brief evidence — manual confirmation required' }}</span>
+                </li>
+              </ul>
+              <p v-if="suggestion.suggestion.unknowns.length">Unresolved: {{ suggestion.suggestion.unknowns.join('; ') }}</p>
+              <p>Usage status is not a statement of price. Unknown metering retains its reservation until reconciliation.</p>
+              <button class="button secondary" type="button" :disabled="busy || draftDirty" @click="applySuggestionsToDraft">Copy suggestions into editable draft →</button>
+            </div>
+          </section>
           <div class="work-grid">
             <section class="source-panel" aria-labelledby="source-heading">
               <div class="panel-heading"><div><p class="overline">SOURCE / IMMUTABLE</p><h2 id="source-heading">Client brief</h2></div><span class="mini-tag">Original</span></div>

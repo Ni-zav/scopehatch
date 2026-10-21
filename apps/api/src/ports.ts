@@ -50,6 +50,8 @@ export interface UnitOfWork {
   getEstimate(projectId: string, scopeRevision: number, catalogVersion: number): Promise<Estimate | null>;
   insertEstimate(estimate: Estimate): Promise<void>;
   getReview(projectId: string, scopeRevision: number, catalogVersion: number): Promise<Review | null>;
+  /** Read-only UI history fallback; never authorize approval/export from this method. */
+  getLatestReview?(projectId: string): Promise<Review | null>;
   insertReview(review: Review): Promise<void>;
   /** Enforce compare-and-set: pending -> approved exactly once in this transaction. */
   approveReview(review: Review): Promise<void>;
