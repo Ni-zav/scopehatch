@@ -226,7 +226,7 @@ try{
   if(vite){
     // npm spawns a shell and Vite grandchild; kill the entire isolated test
     // process group so stdout pipes cannot keep CI alive after success.
-    try{process.kill(-vite.pid,'SIGTERM');}catch{}
+    try{if(vite.pid)process.kill(-vite.pid,'SIGTERM');}catch{}
     await pause(350);
   }
   await api.close();
