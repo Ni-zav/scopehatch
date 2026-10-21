@@ -17,6 +17,7 @@ x-dev-env: &dev-env
   SCOPEHATCH_INFERENCE_BASE_URL: ${SCOPEHATCH_INFERENCE_BASE_URL:-}
   SCOPEHATCH_INFERENCE_MODEL: ${SCOPEHATCH_INFERENCE_MODEL:-}
   REDIS_URL: ${REDIS_URL:-}
+  SCOPEHATCH_API_UPSTREAM: http://api:3000
 x-dev-common: &dev-common
   user: "1000:1000"
   init: true
@@ -90,7 +91,11 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.web
       target: development
-    command: ["npm", "run", "dev", "--workspace", "@scopehatch/web", "--", "--host", "0.0.0.0", "--port", "5173"]
+      args:
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-}
+        VITE_OIDC_AUTHORIZATION_ENDPOINT: ${VITE_OIDC_AUTHORIZATION_ENDPOINT:-}
+        VITE_OIDC_TOKEN_ENDPOINT: ${VITE_OIDC_TOKEN_ENDPOINT:-}
+    command: ["npm", "run", "dev:api", "--workspace", "@scopehatch/web", "--", "--host", "0.0.0.0", "--port", "5173"]
     user: "1000:1000"
     init: true
     security_opt: [no-new-privileges:true]
