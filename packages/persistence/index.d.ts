@@ -73,6 +73,10 @@ export interface AuditEvent {
 }
 export interface PersistenceRepository {
   readonly context: Readonly<{ tenantId: string; actorId: string; roles: readonly Role[] }>;
+  getProject(projectId: string): Promise<{
+    id: string; title: string; brief: string;
+    status: 'draft' | 'blocked' | 'ready' | 'pending' | 'approved';
+  }>;
   createProject(input: { id?: string; title: string; brief: string; requestId?: string }): Promise<{
     id: string; title: string; brief: string; status: 'draft';
   }>;
@@ -92,6 +96,10 @@ export interface PersistenceRepository {
   getEstimate(projectId: string, revision?: number): Promise<Estimate>;
   submitReview(input: { projectId: string; estimateRevision: number; requestId?: string }): Promise<Review>;
   getReview(projectId: string, reviewId: string): Promise<Review>;
+  listReviews(projectId: string): Promise<Review[]>;
+  exportApproved(projectId: string): Promise<{
+    projectId: string; revision: number; currency: string; totalMinor: number; markdown: string;
+  }>;
   approveReview(input: { projectId: string; reviewId: string; requestId?: string }): Promise<Review>;
   listAudit(input?: { projectId?: string; before?: string; limit?: number }): Promise<{
     items: AuditEvent[]; nextCursor: string | null;
