@@ -193,13 +193,19 @@ export function normalizeError(error: unknown): ApiError {
       STALE_ESTIMATE: 409, STALE_REVIEW: 409, STALE_REVISION: 409,
       CONFLICT: 409, IDEMPOTENCY_CONFLICT: 409, ALREADY_EXISTS: 409,
       NOT_FOUND: 404, EVIDENCE_NOT_IN_BRIEF: 422,
+      BUDGET_NOT_CONFIGURED: 503, NO_ELIGIBLE_PROVIDER: 503,
+      QUOTA_EXCEEDED: 429, INFERENCE_IN_PROGRESS: 409,
+      PROVIDER_FAILED: 503, PROVIDER_UNAVAILABLE: 503,
       APPROVAL_REQUIRED: 409,
       BLOCKED_ESTIMATE: 409, SELF_APPROVAL: 403, FORBIDDEN: 403, TENANT_MISMATCH: 404
     };
     if (statuses[code]) return new ApiError(code, statuses[code],
       statuses[code] === 404 ? 'Resource not found' :
       statuses[code] === 403 ? 'Operation forbidden' :
-      statuses[code] === 422 ? 'Invalid request data' : 'Operation conflicts with current state');
+      statuses[code] === 422 ? 'Invalid request data' :
+      statuses[code] === 429 ? 'Inference budget exceeded' :
+      statuses[code] === 503 ? 'Governed inference unavailable' :
+      'Operation conflicts with current state');
   }
   return new ApiError('INTERNAL_ERROR', 500, 'Internal server error');
 }
