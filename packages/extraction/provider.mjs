@@ -2,14 +2,15 @@ import { ExtractionError, fail } from './errors.mjs';
 import { buildMessages } from './prompt.mjs';
 import { LIMITS } from './validation.mjs';
 
-function validateEndpoint(endpoint, allowedHosts) {
+function validateEndpoint(endpoint, allowedHosts, allowDockerOllamaHttp = false) {
   let url;
   try { url = new URL(endpoint); } catch { fail('INVALID_PROVIDER_CONFIG', 'Invalid inference endpoint'); }
   if (url.username || url.password || url.hash || url.search ||
       !['https:', 'http:'].includes(url.protocol))
     fail('INVALID_PROVIDER_CONFIG', 'Inference endpoint must be a plain http(s) URL');
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (url.protocol === 'http:' && !loopback)
+  if (url.protocol === 'http:' && !loopback &&
+    !(allowDockerOllamaHttp && url.hostname === 'ollama'))
     fail('INVALID_PROVIDER_CONFIG', 'Cleartext inference is allowed only on loopback');
   if (!Array.isArray(allowedHosts) || !allowedHosts.includes(url.hostname))
     fail('INVALID_PROVIDER_CONFIG', 'Inference host must be explicitly allowlisted');
@@ -55,9 +56,11 @@ async function readBounded(response, bytesLimit) {
 /** OpenAI chat-completions wire format; works with Ollama's /v1 compatibility endpoint. */
 export function createOpenAICompatibleProvider({
   endpoint, model, apiKey, allowedHosts, provider = 'openai-compatible',
-  fetchImpl = globalThis.fetch, jsonMode = true, maxOutputTokens = 2048
+  fetchImpl = globalThis.fetch, jsonMode = true, maxOutputTokens = 2048,
+  allowDockerOllamaHttp = false
 }) {
-  const url = validateEndpoint(endpoint, allowedHosts);
+  const url = validateEndpoint(endpoint, allowedHosts,
+    provider === 'ollama' && allowDockerOllamaHttp);
   if (typeof model !== 'string' || !model.trim() || model.length > LIMITS.modelLength ||
       typeof provider !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(provider) ||
       typeof fetchImpl !== 'function' || !Number.isSafeInteger(maxOutputTokens) ||
