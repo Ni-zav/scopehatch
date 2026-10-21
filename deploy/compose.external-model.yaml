@@ -1,0 +1,10 @@
+# Only add for hosted OpenAI-compatible BYOK deployments.
+# Store a real secret in deploy/secrets/provider_api_key (mode 0600).
+services:
+  api:
+    secrets: [postgres_password, provider_api_key]
+  worker:
+    secrets: [postgres_password, provider_api_key]
+secrets:
+  provider_api_key:
+    file: ./secrets/provider_api_key
