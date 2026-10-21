@@ -97,7 +97,8 @@ jobs:
           curl --fail --silent http://127.0.0.1:8080/_healthz
           curl --fail --silent http://127.0.0.1:8080/healthz
           docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml exec -T postgres \
-            sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname='\''scopehatch_runtime'\''"' | grep -q "f|f"'
+            psql -U scopehatch_admin -d scopehatch -tAc \
+            "SELECT NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname = 'scopehatch_runtime'" | grep -Fxq t
       - name: Inspect startup failure without printing credentials
         if: failure()
         run: |
