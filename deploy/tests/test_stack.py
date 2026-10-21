@@ -84,6 +84,8 @@ class DeploymentContract(unittest.TestCase):
         self.assertNotIn("provider_api_key", self.prod.get("secrets", {}))
         for role in ["api", "worker"]:
             self.assertIn("provider_api_key", self.external["services"][role]["secrets"])
+            self.assertNotIn("postgres_password", self.external["services"][role]["secrets"])
+            self.assertIn("postgres_runtime_password", self.external["services"][role]["secrets"])
 
 if __name__ == "__main__":
     unittest.main()
