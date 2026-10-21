@@ -50,6 +50,16 @@ INSERT INTO scopehatch.model_usage_events
   (tenant_id,id,project_id,actor_id,provider,model,status,request_id)
 VALUES ('studio-a','a-usage','a-demo','a-operator','synthetic','demo','unknown','seed-a')
 ON CONFLICT (tenant_id,id) DO NOTHING;
+INSERT INTO scopehatch.audit_events
+  (tenant_id,id,project_id,actor_id,action,object_revision,request_id,outcome,metadata)
+VALUES ('studio-a','studio-a-audit','a-demo','a-operator','seed.fixture',1,
+        'seed-studio-a','succeeded','{"fixture":true}'::jsonb)
+ON CONFLICT (tenant_id,id) DO NOTHING;
+INSERT INTO scopehatch.idempotency_records
+  (tenant_id,key,actor_id,operation,request_hash,response)
+VALUES ('studio-a','seed-key','a-operator','SEED',
+        repeat('a',64),'{"fixture":true}'::jsonb)
+ON CONFLICT (tenant_id,key) DO NOTHING;
 
 SELECT set_config('scopehatch.tenant_id','studio-b',true);
 SELECT set_config('scopehatch.actor_id','b-operator',true);
@@ -85,4 +95,14 @@ INSERT INTO scopehatch.model_usage_events
   (tenant_id,id,project_id,actor_id,provider,model,status,request_id)
 VALUES ('studio-b','b-usage','b-demo','b-operator','synthetic','demo','unknown','seed-b')
 ON CONFLICT (tenant_id,id) DO NOTHING;
+INSERT INTO scopehatch.audit_events
+  (tenant_id,id,project_id,actor_id,action,object_revision,request_id,outcome,metadata)
+VALUES ('studio-b','studio-b-audit','b-demo','b-operator','seed.fixture',1,
+        'seed-studio-b','succeeded','{"fixture":true}'::jsonb)
+ON CONFLICT (tenant_id,id) DO NOTHING;
+INSERT INTO scopehatch.idempotency_records
+  (tenant_id,key,actor_id,operation,request_hash,response)
+VALUES ('studio-b','seed-key','b-operator','SEED',
+        repeat('b',64),'{"fixture":true}'::jsonb)
+ON CONFLICT (tenant_id,key) DO NOTHING;
 COMMIT;
