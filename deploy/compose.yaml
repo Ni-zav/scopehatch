@@ -35,7 +35,7 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
     networks: [backend]
     read_only: true
-    tmpfs: [/tmp:size=16m,mode=1777]
+    tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
