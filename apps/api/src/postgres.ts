@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 import type {
   PersistencePort, MembershipPort, UnitOfWork, Principal,
-  Project, Scope, Estimate, Review, AuditEvent
+  Project, Scope, Estimate, Review, AuditEvent, Catalog
 } from './ports.ts';
 // The shared JavaScript persistence module retains its own runtime contract.
 // @ts-expect-error JS ESM module is independently shipped without a .d.mts
@@ -45,7 +45,7 @@ function adapt(repo:DbRepo, principal:Principal):UnitOfWork {
     async insertProject(project) {
       await repo.createProject({id:project.id,title:project.title,brief:project.brief});
     },
-    listCatalogs: async () => await repo.listCatalogs() as UnitOfWork extends {listCatalogs:()=>Promise<infer T>} ? T : never,
+    listCatalogs: async () => await repo.listCatalogs() as Catalog[],
     async getCatalog(version) {
       return await optional(()=>repo.getCatalog(version)) as Awaited<ReturnType<UnitOfWork['getCatalog']>>;
     },
