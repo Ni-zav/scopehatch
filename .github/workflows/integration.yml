@@ -68,3 +68,37 @@ jobs:
         run: npm run test:db
       - name: Postgres and Fastify integration checks
         run: node --experimental-transform-types --test apps/api/test/postgres.test.ts
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate test-only local credentials
+        run: |
+          mkdir -p deploy/secrets
+          umask 077
+          printf '%s' 'scopehatch_integration_admin_ci_pw_2026' > deploy/secrets/postgres_password
+          printf '%s' 'scopehatch_integration_runtime_ci_pw_2026' > deploy/secrets/postgres_runtime_password
+          cp .env.example .env
+          sed -i 's#https://issuer.example.invalid/#https://identity.integration.invalid/#' .env
+          sed -i 's#https://issuer.example.invalid/.well-known/jwks.json#https://identity.integration.invalid/jwks.json#' .env
+      - name: Compose parse and preflight
+        run: |
+          sh deploy/scripts/preflight.sh prod
+          sh deploy/scripts/preflight.sh dev
+      - name: Build immutable Docker images
+        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml build
+      - name: Boot restricted Postgres, migration, API, and web
+        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml up -d --wait --wait-timeout 150
+      - name: Verify HTTP health and runtime role
+        run: |
+          curl --fail --silent http://127.0.0.1:8080/_healthz
+          curl --fail --silent http://127.0.0.1:8080/healthz
+          docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml exec -T postgres \
+            sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname='\''scopehatch_runtime'\''"' | grep -q "f|f"'
+      - name: Inspect startup failure without printing credentials
+        if: failure()
+        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml ps
+      - name: Stop fixture environment
+        if: always()
+        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml down --volumes --remove-orphans
