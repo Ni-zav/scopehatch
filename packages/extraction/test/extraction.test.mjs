@@ -174,3 +174,24 @@ test('fixture mismatch is explicit; model cannot swap tenants', async () => {
   const outcome = await extractor.extractBrief(input(golden[0]), { tenantId: 'tenant-b' });
   assert.equal(Object.hasOwn(outcome, 'tenantId'), false);
 });
+
+test('Docker Ollama HTTP is permitted only for explicit ollama hostname and provider opt-in', () => {
+  const option = { endpoint:'http://ollama:11434/v1/chat/completions',
+    model:'local-vision',allowedHosts:['ollama'] };
+  assert.throws(() => createOpenAICompatibleProvider({...option,provider:'ollama'}),
+    e => e.code==='INVALID_PROVIDER_CONFIG');
+  assert.throws(() => createOpenAICompatibleProvider({...option,provider:'external',
+    allowDockerOllamaHttp:true}),e => e.code==='INVALID_PROVIDER_CONFIG');
+  assert.throws(() => createOpenAICompatibleProvider({...option,allowedHosts:['openai.com'],
+    provider:'ollama',allowDockerOllamaHttp:true}),e => e.code==='INVALID_PROVIDER_CONFIG');
+  assert.throws(() => createOpenAICompatibleProvider({...option,
+    endpoint:'http://169.254.169.254/v1/chat/completions',
+    allowedHosts:['169.254.169.254'],provider:'ollama',allowDockerOllamaHttp:true}),
+    e => e.code==='INVALID_PROVIDER_CONFIG');
+  const p=createOpenAICompatibleProvider({...option,provider:'ollama',
+    allowDockerOllamaHttp:true,fetchImpl:async()=>new Response(JSON.stringify({
+      choices:[{message:{content:JSON.stringify(valid)},finish_reason:'stop'}],
+      usage:{prompt_tokens:4,completion_tokens:2}
+    }))});
+  assert.equal(p.name,'ollama');
+});
