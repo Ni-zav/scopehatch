@@ -235,7 +235,8 @@ AS $$
 DECLARE previous integer;
 BEGIN
   IF NEW.tenant_id <> scopehatch.tenant_id() OR
-     NEW.author_id <> scopehatch.actor_id() THEN
+     NEW.author_id <> scopehatch.actor_id() OR
+     NOT scopehatch.has_role(NEW.tenant_id, ARRAY['owner','operator']) THEN
     RAISE EXCEPTION 'principal mismatch' USING ERRCODE = '42501';
   END IF;
   PERFORM 1 FROM scopehatch.tenants WHERE id = NEW.tenant_id FOR UPDATE;
@@ -259,6 +260,18 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+CREATE OR REPLACE FUNCTION scopehatch.guard_project_insert() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, scopehatch
+AS $
+BEGIN
+  IF NEW.tenant_id IS DISTINCT FROM scopehatch.tenant_id()
+     OR NEW.created_by IS DISTINCT FROM scopehatch.actor_id()
+     OR NOT scopehatch.has_role(NEW.tenant_id, ARRAY['owner','operator']) THEN
+    RAISE EXCEPTION 'project creation permission denied' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $;
+
 CREATE OR REPLACE FUNCTION scopehatch.guard_catalog_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, scopehatch
 AS $$
@@ -317,6 +330,7 @@ BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.state <> 'pending' OR NEW.approved_by IS NOT NULL
       OR NEW.approved_at IS NOT NULL OR NEW.submitted_by <> scopehatch.actor_id()
+      OR NOT scopehatch.has_role(NEW.tenant_id, ARRAY['owner','operator'])
     THEN RAISE EXCEPTION 'invalid review submission' USING ERRCODE = '42501'; END IF;
     PERFORM scopehatch.assert_current_quote(
       NEW.tenant_id, NEW.project_id, NEW.scope_revision,
@@ -351,7 +365,8 @@ AS $$
 DECLARE previous integer;
 DECLARE catalog_currency text;
 BEGIN
-  IF NEW.created_by IS DISTINCT FROM scopehatch.actor_id() THEN
+  IF NEW.created_by IS DISTINCT FROM scopehatch.actor_id()
+     OR NOT scopehatch.has_role(NEW.tenant_id, ARRAY['owner','operator']) THEN
     RAISE EXCEPTION 'principal mismatch' USING ERRCODE = '42501';
   END IF;
   PERFORM 1 FROM scopehatch.tenants WHERE id = NEW.tenant_id FOR UPDATE;
@@ -387,6 +402,9 @@ END $$;
 DROP TRIGGER IF EXISTS immutable_tenants ON scopehatch.tenants;
 CREATE TRIGGER immutable_tenants BEFORE UPDATE OR DELETE ON scopehatch.tenants
 FOR EACH ROW EXECUTE FUNCTION scopehatch.reject_mutation();
+DROP TRIGGER IF EXISTS guard_project_insert ON scopehatch.projects;
+CREATE TRIGGER guard_project_insert BEFORE INSERT ON scopehatch.projects
+FOR EACH ROW EXECUTE FUNCTION scopehatch.guard_project_insert();
 DROP TRIGGER IF EXISTS immutable_projects ON scopehatch.projects;
 CREATE TRIGGER immutable_projects BEFORE UPDATE OR DELETE ON scopehatch.projects
 FOR EACH ROW EXECUTE FUNCTION scopehatch.reject_mutation();
