@@ -205,10 +205,13 @@ try{
     await page.getByText('Prior review superseded',{exact:true}).waitFor({state:'visible'});
     if(!(await page.getByRole('button',{name:/Preview approved draft/}).isDisabled()))
       throw Error('New revision improperly inherited the prior approval');
-    const state=await pool.query(
-      'SELECT count(*)::int AS n FROM scopehatch.scope_revisions WHERE tenant_id=$1 AND project_id=$2',
-      ['studio-a',projectId]);
-    if(state.rows[0]?.n!==2)throw Error('Browser workflow did not persist both scope revisions');
+    // Read through the verified operator transaction; unscoped pool queries
+    // correctly see zero tenant rows under FORCE RLS.
+    const latestScope=await ports.store.transaction(
+      {id:'a-operator',tenantId:'studio-a',roles:['operator']},
+      async(tx)=>tx.getLatestScope(projectId)
+    );
+    if(latestScope?.revision!==2)throw Error('Browser workflow did not persist the second scope revision');
     process.stdout.write('PASS signed browser PKCE -> PostgreSQL tenant A -> two actors -> exact export -> superseded revision\n');
   }finally{await page.close();}
   const malicious=await browser.newPage();
