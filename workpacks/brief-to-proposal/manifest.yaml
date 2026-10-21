@@ -1,0 +1,18 @@
+id: brief-to-proposal
+version: 0.1.0
+description: Human-reviewed client brief to scoped proposal draft
+capabilities:
+  - structured-extraction
+  - catalog-pricing
+  - human-approval
+input_schema: ./schemas/intake.schema.json
+output_schema: ./schemas/scope.schema.json
+external_side_effects: []
+approval:
+  required: true
+  same_revision: true
+  separate_reviewer: true
+pricing:
+  authoritative_source: tenant-catalog
+evaluation_fixture: ./fixtures/sample-briefs.jsonl
+status: contract-only
