@@ -454,61 +454,7 @@ export function createPersistence(pool) {
           'SELECT id,tenant_id,project_id,provider,model,status,input_tokens,output_tokens,request_id,created_at ' +
           'FROM scopehatch.model_usage_events WHERE tenant_id=$1' +
           (projectId === undefined ? '' : ' AND project_id=$2') +
-          ' ORDER BY created_at DESC,id DESC LIMIT 
-        string(key, 'idempotency key');
-        if (key.length > 255) reject('INVALID_INPUT', 'idempotency key too long');
-        string(operation, 'operation');
-        if (typeof execute !== 'function') reject('INVALID_INPUT', 'execute callback required');
-        const hash = digest({ operation, payload });
-        // Advisory lock avoids a temporary, mutable "processing" row.
-        // Even hash collisions only cause additional serialization.
-        await q('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [tenant + '\x1f' + key]);
-        const existing = await q(
-          'SELECT * FROM scopehatch.idempotency_records WHERE tenant_id=$1 AND key=$2',
-          [tenant, key]
-        );
-        if (existing.rowCount) {
-          const record = existing.rows[0];
-          if (record.request_hash !== hash || record.operation !== operation ||
-              record.actor_id !== ctx.actorId)
-            reject('IDEMPOTENCY_CONFLICT', 'key was previously used for another request or actor');
-          return { replayed: true, result: record.response };
-        }
-        const result = await execute(repository);
-        // JSON serialization is intentional: stored response is the replay authority.
-        if (result === undefined) reject('INVALID_INPUT', 'idempotent result must be JSON serializable');
-        await q(
-          'INSERT INTO scopehatch.idempotency_records(tenant_id,key,actor_id,operation,request_hash,response) VALUES($1,$2,$3,$4,$5,$6::jsonb)',
-          [tenant, key, ctx.actorId, operation, hash, JSON.stringify(result)]
-        );
-        return { replayed: false, result };
-      }
-      const repository = Object.freeze({
-        context: ctx, getProject, createProject, createIntake, createCatalog, getCatalog,
-        listCatalogs, createScope, getScope, createEstimate, getEstimate,
-        submitReview, getReview, listReviews, approveReview, exportApproved,
-        listAudit, recordUsage, listUsage, idempotent
-      });
-      const result = await work(repository);
-      await client.query('COMMIT');
-      inTransaction = false;
-      return result;
-    } catch (error) {
-      if (inTransaction) {
-        try { await client.query('ROLLBACK'); } catch { /* original failure is authoritative */ }
-      }
-      if (isUnique(error)) throw new PersistenceError('CONFLICT', 'duplicate record or revision');
-      if (error?.code === '23503') throw new PersistenceError('NOT_FOUND', 'referenced object unavailable');
-      if (error?.code === '42501') throw new PersistenceError('FORBIDDEN', 'database authorization rejected');
-      if (error?.code === '23514') throw new PersistenceError('STALE_REVISION', 'database constraint or stale revision');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-  return Object.freeze({ withPrincipal });
-}
- +
+          ' ORDER BY created_at DESC,id DESC LIMIT $' +
           (projectId === undefined ? '2' : '3'),
           projectId === undefined ? [tenant, limit] : [tenant, projectId, limit]
         );
@@ -551,7 +497,8 @@ export function createPersistence(pool) {
       const repository = Object.freeze({
         context: ctx, getProject, createProject, createIntake, createCatalog, getCatalog,
         listCatalogs, createScope, getScope, createEstimate, getEstimate,
-        submitReview, getReview, listReviews, approveReview, exportApproved, listAudit, idempotent
+        submitReview, getReview, listReviews, approveReview, exportApproved,
+        listAudit, recordUsage, listUsage, idempotent
       });
       const result = await work(repository);
       await client.query('COMMIT');
