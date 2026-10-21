@@ -1,0 +1,114 @@
+# Production-style single-host stack. TLS termination is external.
+x-app-build: &app-build
+  context: ..
+  dockerfile: deploy/Dockerfile.api
+  target: runtime
+x-app-env: &app-env
+  NODE_ENV: production
+  HOST: 0.0.0.0
+  PORT: "3000"
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-scopehatch}
+  POSTGRES_USER: ${POSTGRES_USER:-scopehatch}
+  OIDC_ISSUER: ${OIDC_ISSUER:?Set OIDC_ISSUER in .env}
+  OIDC_AUDIENCE: ${OIDC_AUDIENCE:?Set OIDC_AUDIENCE in .env}
+  OIDC_JWKS_URI: ${OIDC_JWKS_URI:?Set OIDC_JWKS_URI in .env}
+  SCOPEHATCH_INFERENCE_PROVIDER: ${SCOPEHATCH_INFERENCE_PROVIDER:-fixture}
+  SCOPEHATCH_INFERENCE_BASE_URL: ${SCOPEHATCH_INFERENCE_BASE_URL:-}
+  SCOPEHATCH_INFERENCE_MODEL: ${SCOPEHATCH_INFERENCE_MODEL:-}
+  REDIS_URL: ${REDIS_URL:-}
+x-app-security: &app-security
+  user: "1000:1000"
+  read_only: true
+  tmpfs: [/tmp:size=64m,mode=1777]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  init: true
+  pids_limit: 256
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  migrate:
+    <<: *app-security
+    build: *app-build
+    image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:local
+    command: [migrate]
+    restart: "no"
+    environment: *app-env
+    secrets: [postgres_password]
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app-security
+    build: *app-build
+    image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:local
+    command: [api]
+    restart: unless-stopped
+    environment: *app-env
+    secrets: [postgres_password]
+    networks: [backend, frontend, egress]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "deploy/scripts/api-health.mjs"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    stop_grace_period: 30s
+
+  worker:
+    <<: *app-security
+    build: *app-build
+    image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:local
+    command: [worker]
+    restart: unless-stopped
+    environment: *app-env
+    secrets: [postgres_password]
+    networks: [backend, egress]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Process liveness is NOT proof of outbox progress. Worker heartbeat pending integration.
+    stop_grace_period: 60s
+
+  web:
+    image: ${COMPOSE_PROJECT_NAME:-scopehatch}-web:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      target: runtime
+    restart: unless-stopped
+    user: "101:101"
+    read_only: true
+    tmpfs: [/tmp:size=32m,mode=1777]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    init: true
+    pids_limit: 128
+    ports:
+      - "${WEB_BIND_IP:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    networks: [frontend]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/_healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

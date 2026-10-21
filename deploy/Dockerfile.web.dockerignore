@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+deploy/secrets
+deploy/backups
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/*.log
+*.pem
+*.key
+*.p12
