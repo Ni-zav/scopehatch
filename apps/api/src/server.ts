@@ -37,7 +37,7 @@ const send = async (reply: FastifyReply, work: Promise<{ status: number; body: u
 };
 
 export function buildServer(deps: { store: PersistencePort; memberships: MembershipPort; verify: TokenVerifier }): FastifyInstance {
-  const app = Fastify({ logger: false, bodyLimit: 1048576, trustProxy: false });
+  const app = Fastify({ logger: false, bodyLimit: 1048576, trustProxy: false, ajv: { customOptions: { removeAdditional: false } } });
   const service = new ApplicationService(deps.store);
   app.setErrorHandler((error, request, reply) => {
     const validation = error.validation ? new ApiError('INVALID_INPUT', 422, 'Request validation failed') : null;
