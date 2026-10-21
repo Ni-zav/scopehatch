@@ -64,7 +64,7 @@ export class ScopehatchClient {
   private readonly baseUrl: string;
   private readonly credentials: CredentialProvider;
   private readonly transport: FetchTransport;
-  private readonly workspaceId?: string | (() => string | null);
+  private readonly workspaceId: string | (() => string | null) | undefined;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryDelayMs: number;
