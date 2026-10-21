@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ApiError, createHttpApi } from './api'
+import { beginSignIn, finishSignIn, getAccessToken, isSignedIn, oidcConfigured, signOut } from './oidc'
 import { DemoApi, fixtureProjectId, type FixturePersona } from './demo'
 import type { AuditEvent, Catalog, Deliverable, ProposalExport, ScopehatchApi, Snapshot } from './types'
 
@@ -11,8 +12,10 @@ const fixture = isDemo ? new DemoApi() : null
 // The integrator supplies a verified OIDC token provider here after configuring auth.
 const api: ScopehatchApi = fixture ?? createHttpApi({
   baseUrl: import.meta.env.VITE_SCOPEHATCH_API_BASE_URL || '',
-  getAccessToken: async () => null
+  getAccessToken
 })
+const authenticated = ref(isDemo || isSignedIn())
+const oidcReady = isDemo || oidcConfigured()
 const persona = ref<FixturePersona>('operator')
 const view = ref<'workbench' | 'new'>('workbench')
 const projectIdInput = ref('')
@@ -52,7 +55,7 @@ const approved = computed(() => reviewCurrent.value && review.value?.state === '
   estimate.value?.state === 'ready' && !draftDirty.value)
 const pending = computed(() => reviewCurrent.value && review.value?.state === 'pending')
 const blocked = computed(() => estimate.value?.state === 'blocked')
-const canEdit = computed(() => !isDemo || persona.value === 'operator')
+const canEdit = computed(() => isDemo ? persona.value === 'operator' : authenticated.value)
 const hasProject = computed(() => view.value === 'workbench' && Boolean(snapshot.value))
 const localInvalid = computed(() => lines.value.some(l => {
   const q = l.quantity.trim()
@@ -228,8 +231,24 @@ function eventDate(event: AuditEvent) {
   const date = new Date(raw)
   return Number.isNaN(date.valueOf()) ? 'Time unavailable' : date.toLocaleString()
 }
+async function beginLogin() {
+  try { await beginSignIn() } catch(cause) { showError(cause) }
+}
+async function disconnect() {
+  signOut()
+  authenticated.value = false
+  snapshot.value = null
+  catalogs.value = []
+  currentId.value = ''
+  clearFeedback()
+}
 onMounted(async () => {
   try {
+    if (!isDemo) {
+      await finishSignIn()
+      authenticated.value = isSignedIn()
+      if (!authenticated.value) { loading.value = false; return }
+    }
     catalogs.value = await api.catalogs()
     if (isDemo) await loadProject(fixtureProjectId)
     else loading.value = false
@@ -287,7 +306,14 @@ onMounted(async () => {
         <div v-if="isDemo" class="demo-ribbon" role="note">
           <strong>Sample workspace.</strong> All people, briefs, rates and approvals here are synthetic. Data resets on refresh; nothing is sent.
         </div>
-        <div v-else class="api-ribbon" role="note"><strong>API integration mode.</strong> A verified identity provider must be connected before protected requests can succeed. No fixture identity is accepted.</div>
+        <div v-else class="api-ribbon" role="note">
+          <strong>Authenticated API mode.</strong>
+          <span v-if="authenticated"> Signed in with an external OIDC provider. Permissions are verified by the server.</span>
+          <span v-else-if="oidcReady"> Sign in through your configured identity provider to access a workspace.</span>
+          <span v-else> Configure VITE_OIDC_CLIENT_ID, VITE_OIDC_AUTHORIZATION_ENDPOINT and VITE_OIDC_TOKEN_ENDPOINT to enable live mode.</span>
+          <button v-if="!authenticated && oidcReady" class="button secondary" type="button" @click="beginLogin">Sign in securely</button>
+          <button v-else-if="authenticated" class="button secondary" type="button" @click="disconnect">Sign out</button>
+        </div>
         <div v-if="error" class="alert error-alert" role="alert">
           <span aria-hidden="true">!</span><div><strong>Couldn't complete that action</strong><p>{{ error }}</p></div>
           <button type="button" aria-label="Dismiss error" @click="error = ''">×</button>
