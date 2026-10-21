@@ -1,4 +1,6 @@
 import { buildServer } from './server.ts';
+import { Pool } from 'pg';
+import { assertRestrictedPgPool, createPgPorts } from './postgres.ts';
 import { oidcVerifier } from './auth.ts';
 import type { MembershipPort, PersistencePort } from './ports.ts';
 
@@ -12,7 +14,23 @@ export async function start(deps: { store: PersistencePort; memberships: Members
   await app.listen({ host: process.env.HOST ?? '127.0.0.1', port: Number(process.env.PORT ?? '3000') });
   return app;
 }
-if (process.argv[1]?.endsWith('/index.js')) {
-  process.stderr.write('No production persistence/membership adapters are wired. Import start({store,memberships}) from an integration entrypoint.\n');
-  process.exitCode = 1;
+if (process.argv[1] && /\/index\.(?:js|ts)$/.test(process.argv[1])) {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    process.stderr.write('DATABASE_URL required; no in-memory fallback is allowed.\n');
+    process.exitCode = 78;
+  } else {
+    const pool = new Pool({ connectionString, max: 12 });
+    try {
+      await assertRestrictedPgPool(pool);
+      const server = await start(createPgPorts(pool));
+      for (const signal of ['SIGINT', 'SIGTERM']) {
+        process.once(signal, () => { void server.close().finally(() => pool.end()); });
+      }
+    } catch (error) {
+      process.stderr.write('Authenticated API startup failed; verify restricted database role and OIDC configuration.\n');
+      await pool.end();
+      process.exitCode = 78;
+    }
+  }
 }
