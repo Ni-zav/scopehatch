@@ -145,7 +145,7 @@ try{
       VITE_OIDC_AUTHORIZATION_ENDPOINT:issuer+'authorize',
       VITE_OIDC_TOKEN_ENDPOINT:issuer+'token',
       SCOPEHATCH_API_UPSTREAM:'http://127.0.0.1:3998'
-    },stdio:['ignore','pipe','pipe']});
+    },stdio:['ignore','pipe','pipe'],detached:true});
   let viteOutput='';
   vite.stderr.on('data',b=>{viteOutput=(viteOutput+b.toString()).slice(-1500);});
   vite.stdout.on('data',b=>{viteOutput=(viteOutput+b.toString()).slice(-1500);});
@@ -223,7 +223,12 @@ try{
   }finally{await malicious.close();}
 }finally{
   await browser?.close();
-  if(vite){vite.kill('SIGTERM');await pause(350);}
+  if(vite){
+    // npm spawns a shell and Vite grandchild; kill the entire isolated test
+    // process group so stdout pipes cannot keep CI alive after success.
+    try{process.kill(-vite.pid,'SIGTERM');}catch{}
+    await pause(350);
+  }
   await api.close();
   if(idp)await new Promise(resolve=>idp.close(resolve));
   await pool.end();
