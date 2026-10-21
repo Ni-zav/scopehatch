@@ -178,7 +178,14 @@ try{
     await login(page,'a-reviewer');
     await page.getByRole('textbox',{name:'Project ID'}).fill(projectId);
     await page.getByRole('button',{name:'Open project by ID'}).click();
-    await page.getByRole('heading',{name:title}).waitFor({state:'visible'});
+    try {
+      await page.getByRole('heading',{name:title}).waitFor({state:'visible',timeout:10000});
+    } catch(error) {
+      // Diagnostic prints UI error state only, never browser token or source text.
+      process.stderr.write('REVIEWER_UI_DIAGNOSTIC: '+
+        (await page.locator('#main-content').innerText()).slice(0,900).replace(/\\n/g,' ')+'\\n');
+      throw error;
+    }
     await page.getByRole('button',{name:/Approve exact revision/}).click();
     await page.getByText('Approved',{exact:true}).waitFor({state:'visible'});
     await page.getByRole('button',{name:/Preview approved draft/}).click();
