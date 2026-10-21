@@ -69,6 +69,7 @@ services:
       start_period: 30s
     restart: unless-stopped
   worker:
+    profiles: [worker]
     <<: *dev-common
     image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:dev
     build:
