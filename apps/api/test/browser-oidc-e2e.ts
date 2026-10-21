@@ -162,7 +162,8 @@ try{
     await page.getByRole('button',{name:/Create project/}).click();
     await page.getByRole('heading',{name:title}).waitFor({state:'visible'});
     const descriptor=await page.locator('.workspace-intro .overline').innerText();
-    const projectId=descriptor.replace(/^PROJECT\s*\/\s*/i,'').trim();
+    // CSS uppercase presentation must not change the case-sensitive database identifier.
+    const projectId=descriptor.replace(/^PROJECT\s*\/\s*/i,'').trim().toLowerCase();
     if(!/^[0-9a-f-]{36}$/i.test(projectId))
       throw Error('Could not identify created PostgreSQL project from UI: '+descriptor);
     await page.getByRole('button',{name:/Add deliverable/}).click();
