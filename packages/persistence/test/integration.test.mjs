@@ -288,11 +288,16 @@ test('restricted SQL reviewer cannot create projects, intakes, scopes, estimates
 });
 
 test('restricted SQL cannot insert invented brief evidence even as operator', { skip: !enabled }, async () => {
+  const projectId = randomUUID();
   await assert.rejects(() => direct(a, async c => {
     await c.query(
-      "INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count) VALUES('studio-a','a-demo',2,1,'a-operator','[]',1)");
+      "INSERT INTO scopehatch.projects(tenant_id,id,title,created_by) VALUES('studio-a',$1,'Grounding test','a-operator')", [projectId]);
     await c.query(
-      "INSERT INTO scopehatch.scope_deliverables(tenant_id,project_id,scope_revision,line_no,service_id,quantity,evidence,source) VALUES('studio-a','a-demo',2,0,'render',1,'fabricated approval not in brief','brief')");
+      "INSERT INTO scopehatch.intakes(tenant_id,project_id,revision,brief,author_id) VALUES('studio-a',$1,1,'one exterior rendering','a-operator')", [projectId]);
+    await c.query(
+      "INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count) VALUES('studio-a',$1,1,1,'a-operator','[]',1)", [projectId]);
+    await c.query(
+      "INSERT INTO scopehatch.scope_deliverables(tenant_id,project_id,scope_revision,line_no,service_id,quantity,evidence,source) VALUES('studio-a',$1,1,0,'render',1,'fabricated approval not in brief','brief')", [projectId]);
   }), { code: '22023' });
 });
 
