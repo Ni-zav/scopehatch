@@ -11,6 +11,7 @@ test('fixture: brief → corrected scope → ready estimate → independent appr
   await page.getByRole('spinbutton', { name: 'Quantity' }).nth(1).fill('1')
   await page.getByRole('textbox', { name: /One unresolved requirement per line/ }).fill('')
   await page.getByRole('button', { name: /Save new revision & estimate/ }).click()
+  if (process.env.CI) console.log('Browser state after estimate:', (await page.locator('#main-content').innerText()).slice(0,3500))
   await expect(page.getByText('Ready for review', { exact: true })).toBeVisible()
   await expect(page.getByText('IDR', { exact: false }).first()).toBeVisible()
   await page.getByRole('button', { name: 'Request review' }).click()
