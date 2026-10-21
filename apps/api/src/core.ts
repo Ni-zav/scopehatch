@@ -1,0 +1,192 @@
+import { createHash, randomUUID } from 'node:crypto';
+import type { AuditEvent, Catalog, Deliverable, Estimate, HttpResult, PersistencePort, Principal, Project, Review, Scope, UnitOfWork } from './ports.ts';
+// Root JS domain kernel is frozen by another owner and has no TS declaration file.
+// @ts-expect-error External .mjs boundary; model typing is enforced by local port types.
+import { createScopeRevision, estimateScope, submitReview, approveReview, exportProposal } from '../../../src/domain.mjs';
+
+export class ApiError extends Error {
+  constructor(public readonly code: string, public readonly status: number, message: string) { super(message); }
+}
+const fail = (code: string, status: number, message: string): never => { throw new ApiError(code, status, message); };
+export const validRoles = ['owner', 'operator', 'reviewer'] as const;
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => JSON.stringify(k) + ':' + canonical(v)).join(',') + '}';
+  return JSON.stringify(value);
+}
+const digest = (value: unknown): string => createHash('sha256').update(canonical(value)).digest('hex');
+
+function requireProject(project: Project | null): Project {
+  return project ?? fail('NOT_FOUND', 404, 'Resource not found');
+}
+function requireRole(principal: Principal, ...roles: string[]): void {
+  if (!principal.roles.some(r => roles.includes(r))) fail('FORBIDDEN', 403, 'Insufficient permission');
+}
+function latestOrConflict<T>(record: T | null, kind: string): T {
+  return record ?? fail('STALE_REVISION', 409, 'No current ' + kind + ' exists');
+}
+function requireCurrent(scope: Scope | null, revision: number): Scope {
+  if (!scope || scope.revision !== revision) fail('STALE_REVISION', 409, 'Scope revision is no longer current');
+  return scope!;
+}
+function requireCatalog(catalogs: readonly Catalog[], version: number): Catalog {
+  if (catalogs[0]?.version !== version) fail('STALE_REVISION', 409, 'Catalog version is no longer current');
+  return catalogs[0]!;
+}
+function requireBoundEstimate(estimate: Estimate | null): Estimate {
+  return latestOrConflict(estimate, 'estimate');
+}
+function audit(tx: UnitOfWork, principal: Principal, projectId: string, requestId: string, action: string, scopeRevision: number | null): Promise<void> {
+  const event: AuditEvent = { id: randomUUID(), tenantId: principal.tenantId, projectId,
+    actorId: principal.id, requestId, action, scopeRevision, outcome: 'success', createdAt: new Date().toISOString() };
+  return tx.appendAudit(event);
+}
+
+export class ApplicationService {
+  constructor(private readonly store: PersistencePort) {}
+  private read<T>(principal: Principal, action: (tx: UnitOfWork) => Promise<T>): Promise<T> {
+    return this.store.transaction(principal, action);
+  }
+  private write(principal: Principal, method: string, path: string, key: string, body: unknown, operation: (tx: UnitOfWork) => Promise<HttpResult>): Promise<HttpResult> {
+    if (!key || key.length > 200 || !/^[\x21-\x7E]+$/.test(key)) fail('IDEMPOTENCY_KEY_REQUIRED', 422, 'A valid Idempotency-Key is required');
+    const identity = [principal.tenantId, principal.id, method, path, key].join('\0');
+    const inputHash = digest(body);
+    return this.store.transaction(principal, async tx => {
+      const previous = await tx.getIdempotency(identity);
+      if (previous) {
+        if (previous.digest !== inputHash) fail('IDEMPOTENCY_CONFLICT', 409, 'Idempotency-Key was already used with different input');
+        return previous.response;
+      }
+      const response = await operation(tx);
+      await tx.insertIdempotency(identity, { digest: inputHash, response });
+      return response;
+    });
+  }
+  catalogs(principal: Principal) { return this.read(principal, async tx => ({ items: await tx.listCatalogs() })); }
+  project(principal: Principal, id: string) {
+    return this.read(principal, async tx => {
+      const project = requireProject(await tx.getProject(id));
+      const latestScope = await tx.getLatestScope(id);
+      const catalogs = await tx.listCatalogs();
+      const latestEstimate = latestScope && catalogs[0] ? await tx.getEstimate(id, latestScope.revision, catalogs[0].version) : null;
+      const review = latestScope && catalogs[0] ? await tx.getReview(id, latestScope.revision, catalogs[0].version) : null;
+      return { project, ...(latestScope && { latestScope }), ...(latestEstimate && { latestEstimate }), ...(review && { review }) };
+    });
+  }
+  createProject(principal: Principal, key: string, data: { title: string; brief: string }, requestId: string): Promise<HttpResult> {
+    requireRole(principal, 'owner', 'operator');
+    return this.write(principal, 'POST', '/v1/projects', key, data, async tx => {
+      if (!data.title.trim() || !data.brief.trim()) fail('INVALID_INPUT', 422, 'Title and brief must not be blank');
+      const project: Project = { id: randomUUID(), tenantId: principal.tenantId,
+        title: data.title.trim(), brief: data.brief.trim(), status: 'draft' };
+      await tx.insertProject(project);
+      await audit(tx, principal, project.id, requestId, 'project.created', null);
+      return { status: 201, body: { project: { id: project.id, title: project.title, brief: project.brief, status: project.status } } };
+    });
+  }
+  createScope(principal: Principal, id: string, key: string, data: { deliverables: Deliverable[]; unknowns: string[] }, requestId: string): Promise<HttpResult> {
+    requireRole(principal, 'owner', 'operator');
+    return this.write(principal, 'POST', '/v1/projects/' + id + '/scopes', key, data, async tx => {
+      const project = requireProject(await tx.getProject(id));
+      const prior = await tx.getLatestScope(id);
+      const scope: Scope = createScopeRevision({ tenantId: principal.tenantId, projectId: id,
+        authorId: principal.id, revision: (prior?.revision ?? 0) + 1, brief: project.brief,
+        deliverables: data.deliverables, unknowns: data.unknowns });
+      await tx.insertScope(scope);
+      await audit(tx, principal, id, requestId, 'scope.created', scope.revision);
+      return { status: 201, body: { scope } };
+    });
+  }
+  createEstimate(principal: Principal, id: string, key: string, data: { scopeRevision: number; catalogVersion: number }, requestId: string): Promise<HttpResult> {
+    requireRole(principal, 'owner', 'operator');
+    return this.write(principal, 'POST', '/v1/projects/' + id + '/estimates', key, data, async tx => {
+      requireProject(await tx.getProject(id));
+      const scope = requireCurrent(await tx.getLatestScope(id), data.scopeRevision);
+      const catalog = requireCatalog(await tx.listCatalogs(), data.catalogVersion);
+      const prior = await tx.getEstimate(id, scope.revision, catalog.version);
+      if (prior) fail('ALREADY_EXISTS', 409, 'Estimate already exists for this revision and catalog');
+      const estimate: Estimate = estimateScope(scope, catalog);
+      await tx.insertEstimate(estimate);
+      await audit(tx, principal, id, requestId, 'estimate.created', scope.revision);
+      return { status: 201, body: { estimate } };
+    });
+  }
+  submit(principal: Principal, id: string, key: string, data: { scopeRevision: number; catalogVersion: number }, requestId: string): Promise<HttpResult> {
+    requireRole(principal, 'owner', 'operator');
+    return this.write(principal, 'POST', '/v1/projects/' + id + '/reviews', key, data, async tx => {
+      requireProject(await tx.getProject(id));
+      const scope = requireCurrent(await tx.getLatestScope(id), data.scopeRevision);
+      requireCatalog(await tx.listCatalogs(), data.catalogVersion);
+      const estimate = requireBoundEstimate(await tx.getEstimate(id, data.scopeRevision, data.catalogVersion));
+      if (await tx.getReview(id, data.scopeRevision, data.catalogVersion)) fail('ALREADY_EXISTS', 409, 'Review already submitted');
+      const review: Review = submitReview({ scope, estimate, actor: principal });
+      await tx.insertReview(review);
+      await audit(tx, principal, id, requestId, 'review.submitted', scope.revision);
+      return { status: 201, body: { review } };
+    });
+  }
+  approve(principal: Principal, id: string, key: string, data: { scopeRevision: number; catalogVersion: number }, requestId: string): Promise<HttpResult> {
+    requireRole(principal, 'owner', 'reviewer');
+    return this.write(principal, 'POST', '/v1/projects/' + id + '/approve', key, data, async tx => {
+      requireProject(await tx.getProject(id));
+      const scope = requireCurrent(await tx.getLatestScope(id), data.scopeRevision);
+      requireCatalog(await tx.listCatalogs(), data.catalogVersion);
+      const estimate = requireBoundEstimate(await tx.getEstimate(id, data.scopeRevision, data.catalogVersion));
+      const review = latestOrConflict(await tx.getReview(id, data.scopeRevision, data.catalogVersion), 'review');
+      const approved: Review = approveReview({ scope, estimate, review, actor: principal });
+      await tx.approveReview(approved);
+      await audit(tx, principal, id, requestId, 'review.approved', scope.revision);
+      return { status: 200, body: { review: approved } };
+    });
+  }
+  export(principal: Principal, id: string, revision: number) {
+    return this.read(principal, async tx => {
+      requireProject(await tx.getProject(id));
+      const scope = requireCurrent(await tx.getLatestScope(id), revision);
+      const catalog = latestOrConflict((await tx.listCatalogs())[0] ?? null, 'catalog');
+      const estimate = requireBoundEstimate(await tx.getEstimate(id, revision, catalog.version));
+      const review = await tx.getReview(id, revision, catalog.version);
+      return exportProposal({ scope, estimate, review });
+    });
+  }
+  audit(principal: Principal, id: string, cursor: string | undefined, limit: number) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail('INVALID_INPUT', 422, 'limit must be an integer between 1 and 100');
+    return this.read(principal, async tx => {
+      requireProject(await tx.getProject(id));
+      const events = await tx.listAudit(id);
+      let start = 0;
+      if (cursor !== undefined) {
+        if (!/^[A-Za-z0-9_-]{1,256}$/.test(cursor)) fail('INVALID_CURSOR', 422, 'Invalid cursor');
+        const previousId = Buffer.from(cursor, 'base64url').toString('utf8');
+        const index = events.findIndex(event => event.id === previousId);
+        if (index === -1) fail('INVALID_CURSOR', 422, 'Unknown cursor');
+        start = index + 1;
+      }
+      const items = events.slice(start, start + limit);
+      const nextCursor = start + limit < events.length && items.length ? Buffer.from(items[items.length - 1]!.id).toString('base64url') : null;
+      return { items, nextCursor };
+    });
+  }
+  async suggestions(principal: Principal, id: string): Promise<never> {
+    await this.read(principal, async tx => { requireProject(await tx.getProject(id)); });
+    return fail('PROVIDER_UNAVAILABLE', 503, 'Suggestion provider is not configured');
+  }
+}
+
+export function normalizeError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+    const code = error.code;
+    const statuses: Record<string, number> = {
+      INVALID_INPUT: 422, DUPLICATE_SERVICE: 422, MONEY_OVERFLOW: 422,
+      STALE_ESTIMATE: 409, STALE_REVIEW: 409, APPROVAL_REQUIRED: 409,
+      BLOCKED_ESTIMATE: 409, SELF_APPROVAL: 403, FORBIDDEN: 403, TENANT_MISMATCH: 404
+    };
+    if (statuses[code]) return new ApiError(code, statuses[code],
+      statuses[code] === 404 ? 'Resource not found' :
+      statuses[code] === 403 ? 'Operation forbidden' :
+      statuses[code] === 422 ? 'Invalid request data' : 'Operation conflicts with current state');
+  }
+  return new ApiError('INTERNAL_ERROR', 500, 'Internal server error');
+}
