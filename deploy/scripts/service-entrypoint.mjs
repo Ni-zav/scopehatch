@@ -30,7 +30,12 @@ try {
   const dbName = requireEnv('POSTGRES_DB');
   const dbHost = requireEnv('POSTGRES_HOST');
   const dbPort = requireEnv('POSTGRES_PORT');
-  const dbPass = readSecret(process.env.POSTGRES_PASSWORD_FILE ?? '/run/secrets/postgres_password');
+  const secretFile = role === 'migrate'
+    ? '/run/secrets/postgres_password'
+    : '/run/secrets/postgres_runtime_password';
+  const dbPass = readSecret(process.env.POSTGRES_PASSWORD_FILE ?? secretFile);
+  if (role !== 'migrate' && dbUser === (process.env.POSTGRES_ADMIN_USER ?? 'scopehatch_admin'))
+    throw new Error('Runtime database login may not equal bootstrap administrator');
   const provider = process.env.SCOPEHATCH_INFERENCE_PROVIDER ?? 'fixture';
   if (!['fixture', 'ollama', 'openai-compatible'].includes(provider)) {
     throw new Error('Unsupported SCOPEHATCH_INFERENCE_PROVIDER setting');
@@ -48,6 +53,9 @@ try {
   env = {
     ...process.env,
     DATABASE_URL: `postgresql://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPass)}@${dbHost}:${dbPort}/${encodeURIComponent(dbName)}`,
+    ...(role === 'migrate' ? {
+      SCOPEHATCH_RUNTIME_DB_PASSWORD_FILE: '/run/secrets/postgres_runtime_password'
+    } : {}),
   };
   if (provider === 'openai-compatible' && role !== 'migrate') {
     env.OPENAI_API_KEY = readSecret(process.env.PROVIDER_API_KEY_FILE ?? '/run/secrets/provider_api_key');
