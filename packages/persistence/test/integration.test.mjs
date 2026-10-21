@@ -27,6 +27,7 @@ before(async () => {
   for (const f of [
     '../../../db/migrations/001_initial.sql',
     '../../../db/migrations/002_quote_integrity.sql',
+    '../../../db/migrations/003_immutable_children_usage.sql',
     '../../../db/seeds/001_studios.sql'
   ]) await admin.query(await readFile(path(f), 'utf8'));
   store = createPersistence(app);
@@ -80,7 +81,8 @@ test('direct SQL SELECT does not expose other tenant briefs, quotes, reviews or 
     c.query('SELECT * FROM scopehatch.reviews'),
     c.query('SELECT * FROM scopehatch.audit_events'),
     c.query("SELECT id FROM scopehatch.projects WHERE tenant_id='studio-a'"),
-    c.query('SELECT * FROM scopehatch.idempotency_records')
+    c.query('SELECT * FROM scopehatch.idempotency_records'),
+    c.query('SELECT * FROM scopehatch.model_usage_events')
   ]));
   for (const r of raw) assert.ok(r.rows.every(row => row.tenant_id !== 'studio-a'));
   assert.equal(raw[4].rowCount, 0);
@@ -112,6 +114,16 @@ test('catalog/intake/estimate and audit cannot be changed with raw SQL', { skip:
     "INSERT INTO scopehatch.estimate_revisions " +
     "(tenant_id,project_id,revision,scope_revision,catalog_version,created_by,currency,state,total_minor,lines,blockers) " +
     "VALUES('studio-a','a-demo',2,1,1,'a-operator','IDR','ready',1,'[]','[]')");
+  await directFailure(a,
+    "INSERT INTO scopehatch.catalog_services(tenant_id,catalog_version,service_id,label,unit_price_minor) " +
+    "VALUES('studio-a',1,'late-service','forged after commit',1)");
+  await directFailure(a,
+    "INSERT INTO scopehatch.scope_deliverables" +
+    "(tenant_id,project_id,scope_revision,line_no,service_id,quantity,evidence,source) " +
+    "VALUES('studio-a','a-demo',1,1,'render',1,'late item','brief')");
+  await directFailure(a,
+    "UPDATE scopehatch.model_usage_events SET status='reported',input_tokens=0 " +
+    "WHERE tenant_id='studio-a'");
   await directFailure(a,
     "UPDATE scopehatch.reviews SET state='approved',approved_by='a-operator',approved_at=now() " +
     "WHERE tenant_id='studio-a' AND id='a-review'");
@@ -151,6 +163,20 @@ test('intake and revision append-only, ready quote computed from frozen catalog'
   await assert.rejects(
     () => store.withPrincipal(b, tx => tx.getScope(data.created.result.id)),
     { code: 'NOT_FOUND' }
+  );
+});
+
+test('usage keeps unknown values null and is isolated by tenant', { skip: !enabled }, async () => {
+  const aUsage = await store.withPrincipal(a, tx => tx.listUsage());
+  const bUsage = await store.withPrincipal(b, tx => tx.listUsage());
+  assert.ok(aUsage.some(u => u.id === 'a-usage' && u.inputTokens === null));
+  assert.ok(bUsage.some(u => u.id === 'b-usage' && u.outputTokens === null));
+  assert.ok(!bUsage.some(u => u.tenantId === 'studio-a'));
+  await assert.rejects(
+    () => store.withPrincipal(a, tx => tx.recordUsage({
+      provider: 'demo', model: 'synthetic', status: 'unknown', inputTokens: 0
+    })),
+    { code: 'INVALID_INPUT' }
   );
 });
 
