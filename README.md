@@ -2,11 +2,22 @@
 
 **From a messy request to approved work.**
 
-> STATUS: product research and initial technical planning, compiled 2026-10-21. No app, live provider integration, benchmark, revenue, security certification, or paying customer exists yet.
+> STATUS: initial repo + domain kernel (2026-10-21). A pure quoting-and-approval module exists, but no API, database, LLM integration, UI, hosted service, or paying customers exist yet.
 
 Scopehatch is an open-source, self-hostable workbench for people and AI agents to turn ambiguous business requests into structured, evidence-backed, human-reviewed work. The first business workflow is **client brief → scoped requirements → rule-based estimate → clarification / proposal draft → review → export**.
 
 It has two aligned surfaces: (1) a human operator's browser workbench; (2) programmatic REST/SDK/MCP access for authorized agents. Both go through **the same policy, budget, audit and execution primitives**. Its modular governed inference layer supports hosted BYOK and local models, without claiming to be a generic gateway better than established offerings.
+
+## Run the day-1 domain kernel
+
+Requires Node.js 22 or later. No npm dependencies are needed for this core slice:
+
+```bash
+npm test
+npm run demo
+```
+
+This runs unit tests and prints a *local example* proposal; it is not a web service or a customer-ready quote. See [implementation status](docs/10-current-implementation.md).
 
 ## Primary persona and use case
 

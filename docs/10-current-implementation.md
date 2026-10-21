@@ -1,0 +1,3 @@
+# Actual implementation status
+
+As of initial branch, only a pure Node.js domain kernel, deterministic tests and CLI demonstration exist. Run `npm test` and `npm run demo`. No API, persistent authentication, PostgreSQL, model inference, Vue UI, deployed service, billing or production tenant isolation has been implemented. **The actor provided to domain functions is not authentication**; production API must verify it against OIDC. Approval records are illustrative until transactionally stored. Quoting uses integer currency minor units and must gain locale-aware presentation before customer use. See docs/06 for next build gates.
