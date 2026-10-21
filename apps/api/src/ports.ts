@@ -61,6 +61,13 @@ export interface UnitOfWork {
   insertIdempotency(identity: string, record: IdempotencyRecord): Promise<void>;
 }
 export interface PersistencePort {
+  /** Durable idempotency must encompass operation and persisted response in one transaction. */
+  idempotent?(principal: Principal, input: {
+    key: string; operation: string; payload: unknown;
+    execute: (tx: UnitOfWork) => Promise<HttpResult>;
+  }): Promise<HttpResult>;
+  /** Exact export must be checked and read under database revision locks. */
+  exportApproved?(principal: Principal, projectId: string, revision: number): Promise<unknown>;
   /** Must atomically commit/rollback all records; serialize conflicting commands.
    * Set RLS transaction context from principal only (never SQL session state inherited from pooled connections).
    */
