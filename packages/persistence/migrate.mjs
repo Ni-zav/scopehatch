@@ -25,7 +25,8 @@ try {
     throw new Error('Migration credentials lack role provisioning permission');
   for (const name of [
     '001_initial.sql', '002_quote_integrity.sql',
-    '003_immutable_children_usage.sql', '004_identity_lookup.sql'
+    '003_immutable_children_usage.sql', '004_identity_lookup.sql',
+    '005_inference_governance.sql'
   ]) {
     const sql = await readFile(fileURLToPath(new URL('../../db/migrations/' + name, import.meta.url)), 'utf8');
     await client.query(sql);
