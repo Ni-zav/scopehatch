@@ -1,6 +1,6 @@
 # Scopehatch single-host deployment
 
-**Status: scaffolding, NOT a verified end-to-end demo (2026-10-21).** The main branch did not yet contain the API, worker, web, persistence or migrations when this workstream began. No container boot, authentication workflow, image build, integration suite or real model call is claimed. Refer to [integration requirements](integration.md).
+**Status (integration branch, 2026-10-21):** Docker images, migrations, restricted PostgreSQL runtime login, API and web HTTP health, signed Fastify/PostgreSQL unit-integration flow, and fixture Playwright desktop/mobile tests are verified in [integration CI](https://github.com/Ni-zav/scopehatch/actions/workflows/integration.yml). **Not a production release**: real browser OIDC provider credentials and the durable governed-inference ledger are not integrated, and the outbox worker remains disabled by default. Main remains unchanged until release gates pass.
 
 This stack targets a Linux single host with Docker Engine + Docker Compose v2. Kubernetes, GPU and Redis are NOT prerequisites. All commands start at the repository root.
 
@@ -22,8 +22,13 @@ cp .env.example .env
 umask 077
 mkdir -p deploy/secrets
 openssl rand -base64 48 > deploy/secrets/postgres_password
-chmod 600 deploy/secrets/postgres_password
-# Update OIDC_ISSUER, OIDC_AUDIENCE, OIDC_JWKS_URI in .env
+openssl rand -base64 48 > deploy/secrets/postgres_runtime_password
+# Containers run as UID/GID 1000; file-backed Compose secrets must be readable to that UID.
+# Do not make these files world-readable.
+sudo chown 1000:1000 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+sudo chmod 0400 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+# Configure the actual OIDC_ISSUER, OIDC_AUDIENCE, OIDC_JWKS_URI,
+# and public PKCE VITE_OIDC_CLIENT_ID / AUTHORIZATION_ENDPOINT / TOKEN_ENDPOINT in .env.
 ```
 
 Never commit `.env`, `deploy/secrets/`, backup dumps, customer text or credentials. The bridge reads Docker secrets into child-process environment; no DB password or provider key is interpolated into Compose YAML. A signed JWT with a configured trusted issuer/audience and **trusted membership records** is mandatory in both dev and prod; there is no magic tenant/role header.
@@ -38,17 +43,17 @@ docker compose --env-file .env -f deploy/compose.yaml ps
 
 This only starts PostgreSQL, not Scopehatch's business workflow. Docker must be installed locally to execute these commands.
 
-### Production-style app (once integration dependencies are satisfied)
+### Single-host manual workflow (verified Compose boot, external OIDC setup required)
 
 ```sh
 sh deploy/scripts/preflight.sh prod
-docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml up --build -d
+docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml up --build -d --wait
 docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml ps
 curl -fsS http://127.0.0.1:8080/_healthz
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
-Open `http://127.0.0.1:8080`. The first healthcheck is nginx only and the second is API liveness only; **neither demonstrates approval, exports, tenant isolation or readiness**. A genuine demo needs two verified identities and complete brief → scope → blockers/estimate → second-person review → revision-bound export → audit/evaluation evidence.
+Open `http://127.0.0.1:8080`. The first healthcheck is nginx only and the second is API liveness only; **neither demonstrates approval, exports, tenant isolation or readiness**. For real login, configure your identity provider's public PKCE client to redirect to the deployed web URL and allow token endpoint CORS. Create active database memberships whose `principal_id` matches the **verified JWT subject**. Two distinct identities are required to test independent approval. For deterministic synthetic Studio A/B fixtures only, after initial migrations and before using the fixtures, execute: `docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml exec -T postgres psql -U scopehatch_admin -d scopehatch < db/seeds/001_studios.sql`. Do not apply synthetic users to a real studio. A successful healthcheck is not proof of authenticated browser login.
 
 ### Development mode
 
@@ -57,13 +62,13 @@ sh deploy/scripts/preflight.sh dev
 docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.dev.yaml up --build
 ```
 
-Vite will serve `http://127.0.0.1:5173` and API `http://127.0.0.1:3000/healthz` **after their implementations exist**. Development uses rebuild-on-edit for now, not live source bind mounts. The web worker must add Vite proxy rules for `/v1` and `/healthz`; authentication is not disabled.
+Vite serves `http://127.0.0.1:5173`, forwarding `/v1` and `/healthz` to the API. The `dev:api` web script disables the standalone fixture; verified external OIDC login is required. Local fixture development remains an isolated, explicitly labeled mode.
 
 ### Optional Redis
 
 Add `--profile cache` to the Compose invocation and configure `REDIS_URL=redis://redis:6379` only when the API actually supports Redis. Do not treat it as a durable queue or budget ledger.
 
-### Optional local Ollama, CPU-first
+### Optional local Ollama infrastructure (inference API still gated)
 
 Set `SCOPEHATCH_INFERENCE_PROVIDER=ollama`, `SCOPEHATCH_INFERENCE_BASE_URL=http://ollama:11434`, `SCOPEHATCH_INFERENCE_MODEL=<installed-model>`. Run:
 
@@ -78,7 +83,7 @@ Check model rights/resources separately. An `ollama list` health response proves
 
 ### Optional hosted OpenAI-compatible BYOK
 
-Set provider to `openai-compatible`, configure its allowlisted URL/model and write the key to `deploy/secrets/provider_api_key` (mode 0600). Do **not** put it in `.env` or logs. Add `-f deploy/compose.external-model.yaml` to the normal production invocation and call `sh deploy/scripts/preflight.sh prod external`. The application still must enforce tenant/provider eligibility, SSRF restrictions, authorization and budget reservations; a global key is illustrative for single-tenant demo only.
+Set provider to `openai-compatible`, configure its allowlisted URL/model and write the key to `deploy/secrets/provider_api_key` (mode 0600). Do **not** put it in `.env` or logs. Add `-f deploy/compose.external-model.yaml` to the normal production invocation and call `sh deploy/scripts/preflight.sh prod external`. The provider secret can be supplied to the runtime, but **the live suggestions endpoint remains unavailable** until tenant allowlists and PostgreSQL-backed budget reservations are implemented and tested. Never interpret this configuration alone as enabling governed inference.
 
 ## Lifecycle
 
