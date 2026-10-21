@@ -74,6 +74,25 @@ export function createInferenceGateway(pool: Pool, store: PersistencePort) {
       const configuredModel=process.env.SCOPEHATCH_INFERENCE_MODEL??'fixture-v1';
       const allowed=candidates.filter((c:Route)=>c.providerId===providerType&&c.model===configuredModel);
       if(!allowed.length)denied('NO_ELIGIBLE_PROVIDER',503,'No allowed tenant model for this operation');
+      // External credentials are a host configuration, never user input.
+      // Until tenant-specific credential storage exists, single-tenant binding is mandatory.
+      if(providerType==='openai-compatible' &&
+         process.env.SCOPEHATCH_INFERENCE_TENANT_ID!==principal.tenantId)
+        denied('NO_ELIGIBLE_PROVIDER',503,'Hosted inference credential is not assigned to this tenant');
+      if(providerType!=='fixture'){
+        const base=process.env.SCOPEHATCH_INFERENCE_BASE_URL;
+        const hosts=(process.env.SCOPEHATCH_INFERENCE_ALLOWED_HOSTS??'')
+          .split(',').map(x=>x.trim()).filter(Boolean);
+        let target:URL;
+        try{target=new URL(base??'')}catch{
+          return denied('NO_ELIGIBLE_PROVIDER',503,'Inference endpoint is not configured');
+        }
+        if(!hosts.includes(target.hostname))
+          denied('NO_ELIGIBLE_PROVIDER',503,'Inference host is not explicitly approved');
+        if(providerType==='ollama' && (target.hostname!=='ollama' ||
+           target.protocol!=='http:'))
+          denied('NO_ELIGIBLE_PROVIDER',503,'Ollama must use the trusted internal Docker endpoint');
+      }
       const serviceCatalog=initial.catalog.services.map(s=>({id:s.id,label:s.label}));
       const intentPayload={
         projectId,tenantId:principal.tenantId,actorId:principal.id,
@@ -104,14 +123,16 @@ export function createInferenceGateway(pool: Pool, store: PersistencePort) {
             provider=createFixture(input.brief,input.serviceCatalog,input.requestId);
           }else {
             const endpoint=process.env.SCOPEHATCH_INFERENCE_BASE_URL;
-            if(!endpoint||providerType!=='openai-compatible')
+            if(!endpoint|| !['openai-compatible','ollama'].includes(providerType))
               throw new ApiError('NO_ELIGIBLE_PROVIDER',503,'Configured provider not connected');
-            const host=new URL(endpoint).hostname;
+            const hosts=(process.env.SCOPEHATCH_INFERENCE_ALLOWED_HOSTS??'').split(',').map(x=>x.trim()).filter(Boolean);
             provider=createOpenAICompatibleProvider({
               endpoint: endpoint.endsWith('/chat/completions')?endpoint:
                 endpoint.replace(/\/$/,'')+'/chat/completions',
-              model,provider:providerId,apiKey:process.env.OPENAI_API_KEY,
-              allowedHosts:[host],maxOutputTokens:2048
+              model,provider:providerId,
+              apiKey:providerType==='openai-compatible'?process.env.OPENAI_API_KEY:undefined,
+              allowedHosts:hosts,allowDockerOllamaHttp:providerType==='ollama',
+              maxOutputTokens:2048
             });
           }
           const value=await extractBrief(input,{tenantId:principal.tenantId,signal},provider,{timeoutMs:allowed[0]!.timeoutMs});
