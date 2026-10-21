@@ -51,6 +51,8 @@ export type FetchTransport = (input: RequestInfo | URL, init?: RequestInit) => P
 export interface ScopehatchClientOptions {
   baseUrl: string;
   credentials: CredentialProvider;
+  /** Optional verified-membership workspace selector, never a role or tenant authority. */
+  workspaceId?: string | (() => string | null);
   fetch?: FetchTransport;
   timeoutMs?: number;
   /** Number of retries after the first attempt, maximum 5; defaults to 2 on GET and 0 on POST. */
