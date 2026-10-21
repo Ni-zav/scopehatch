@@ -1,0 +1,16 @@
+{
+  "name": "@scopehatch/governance",
+  "version": "0.1.0",
+  "private": true,
+  "types": "./src/index.d.ts",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./testing": "./src/memory-store.mjs"
+  },
+  "scripts": {
+    "build": "node --check src/index.mjs && node --check src/memory-store.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
