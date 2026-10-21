@@ -273,3 +273,35 @@ test('a new intake invalidates a previously submitted review', { skip: !enabled 
     { code: 'STALE_REVISION' }
   );
 });
+
+test('restricted SQL reviewer cannot create projects, intakes, scopes, estimates or submit review', { skip: !enabled }, async () => {
+  await directFailure(reviewerA,
+    "INSERT INTO scopehatch.projects(tenant_id,id,title,created_by) VALUES('studio-a',$1,'forged','a-reviewer')", [randomUUID()]);
+  await directFailure(reviewerA,
+    "INSERT INTO scopehatch.intakes(tenant_id,project_id,revision,brief,author_id) VALUES('studio-a','a-demo',2,'forged','a-reviewer')");
+  await directFailure(reviewerA,
+    "INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count) VALUES('studio-a','a-demo',2,1,'a-reviewer','[]',1)");
+  await directFailure(reviewerA,
+    "INSERT INTO scopehatch.estimate_revisions(tenant_id,project_id,revision,scope_revision,catalog_version,created_by,currency,state,total_minor,lines,blockers) VALUES('studio-a','a-demo',2,1,1,'a-reviewer','IDR','ready',400000,'[]','[]')");
+  await directFailure(reviewerA,
+    "INSERT INTO scopehatch.reviews(tenant_id,project_id,id,estimate_revision,scope_revision,catalog_version,submitted_by) VALUES('studio-a','a-demo',$1,1,1,1,'a-reviewer')", [randomUUID()]);
+});
+
+test('restricted SQL cannot insert invented brief evidence even as operator', { skip: !enabled }, async () => {
+  await assert.rejects(() => direct(a, async c => {
+    await c.query(
+      "INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count) VALUES('studio-a','a-demo',2,1,'a-operator','[]',1)");
+    await c.query(
+      "INSERT INTO scopehatch.scope_deliverables(tenant_id,project_id,scope_revision,line_no,service_id,quantity,evidence,source) VALUES('studio-a','a-demo',2,0,'render',1,'fabricated approval not in brief','brief')");
+  }), { code: '22023' });
+});
+
+test('identity pool role has no superuser, bypass RLS, or schema ownership', { skip: !enabled }, async () => {
+  const r = await app.query(
+    "SELECT rolsuper,rolbypassrls,pg_has_role(current_user,'scopehatch_app','member') AS member,"+
+    "row_security_active('scopehatch.projects'::regclass) AS active FROM pg_roles WHERE rolname=current_user");
+  assert.equal(r.rows[0].rolsuper,false);
+  assert.equal(r.rows[0].rolbypassrls,false);
+  assert.equal(r.rows[0].member,true);
+  assert.equal(r.rows[0].active,true);
+});
