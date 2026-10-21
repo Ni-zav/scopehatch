@@ -53,6 +53,7 @@ export interface UnitOfWork {
   insertReview(review: Review): Promise<void>;
   /** Enforce compare-and-set: pending -> approved exactly once in this transaction. */
   approveReview(review: Review): Promise<void>;
+  /** Events ordered by immutable append sequence, oldest first, for stable cursor pagination. */
   listAudit(projectId: string): Promise<readonly AuditEvent[]>;
   appendAudit(event: AuditEvent): Promise<void>;
   /** Unique (tenant, actor, method, path, key), locked until transaction commits. */
