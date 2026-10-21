@@ -68,6 +68,10 @@ function adapt(repo:DbRepo, principal:Principal):UnitOfWork {
       const reviews=await repo.listReviews(id);
       return reviews.find(x=>x.scopeRevision===scopeRevision&&x.catalogVersion===catalogVersion)??null;
     },
+    async getLatestReview(id) {
+      const reviews=await repo.listReviews(id);
+      return reviews[0]??null;
+    },
     async insertReview(review) {
       const estimate=await repo.getEstimate(review.projectId);
       if(estimate.scopeRevision!==review.scopeRevision||estimate.catalogVersion!==review.catalogVersion) stale();
