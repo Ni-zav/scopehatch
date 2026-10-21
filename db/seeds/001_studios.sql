@@ -46,6 +46,10 @@ BEGIN
    VALUES ('studio-a','a-demo','a-review',1,1,1,'a-operator');
  END IF;
 END $seed$;
+INSERT INTO scopehatch.model_usage_events
+  (tenant_id,id,project_id,actor_id,provider,model,status,request_id)
+VALUES ('studio-a','a-usage','a-demo','a-operator','synthetic','demo','unknown','seed-a')
+ON CONFLICT (tenant_id,id) DO NOTHING;
 
 SELECT set_config('scopehatch.tenant_id','studio-b',true);
 SELECT set_config('scopehatch.actor_id','b-operator',true);
@@ -77,4 +81,8 @@ BEGIN
      '[{"serviceId":"render","quantity":1,"unitPriceMinor":30000,"subtotalMinor":30000,"evidence":"one image","source":"brief"}]'::jsonb,'[]'::jsonb);
  END IF;
 END $seed$;
+INSERT INTO scopehatch.model_usage_events
+  (tenant_id,id,project_id,actor_id,provider,model,status,request_id)
+VALUES ('studio-b','b-usage','b-demo','b-operator','synthetic','demo','unknown','seed-b')
+ON CONFLICT (tenant_id,id) DO NOTHING;
 COMMIT;
