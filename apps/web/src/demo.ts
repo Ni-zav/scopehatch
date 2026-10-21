@@ -134,7 +134,7 @@ export class DemoApi implements ScopehatchApi {
   async estimate(id: string, body: { scopeRevision: number; catalogVersion: number }): Promise<Estimate> {
     this.requireOperator()
     const record = this.record(id)
-    const scope = this.latest(record.scopes)
+    const scope = this.latest(record.scopes)!
     if (!scope || scope.revision !== body.scopeRevision || catalog.version !== body.catalogVersion)
       fail(409, 'STALE_REVISION', 'Estimate requires the latest scope and catalog version.')
     const estimate = this.calculate(scope)
@@ -145,8 +145,8 @@ export class DemoApi implements ScopehatchApi {
   async submitReview(id: string, body: { scopeRevision: number; catalogVersion: number }): Promise<Review> {
     this.requireOperator()
     const record = this.record(id)
-    const scope = this.latest(record.scopes)
-    const estimate = this.latest(record.estimates)
+    const scope = this.latest(record.scopes)!
+    const estimate = this.latest(record.estimates)!
     if (!scope || !estimate || scope.revision !== body.scopeRevision ||
         estimate.scopeRevision !== scope.revision || estimate.catalogVersion !== body.catalogVersion)
       fail(409, 'STALE_REVISION', 'Save and estimate the latest revision before requesting review.')
@@ -164,9 +164,9 @@ export class DemoApi implements ScopehatchApi {
   async approve(id: string, body: { scopeRevision: number; catalogVersion: number }): Promise<Review> {
     this.requireReviewer()
     const record = this.record(id)
-    const scope = this.latest(record.scopes)
-    const review = this.latest(record.reviews)
-    const estimate = this.latest(record.estimates)
+    const scope = this.latest(record.scopes)!
+    const review = this.latest(record.reviews)!
+    const estimate = this.latest(record.estimates)!
     if (!scope || !review || !estimate || review.state !== 'pending' ||
         scope.revision !== body.scopeRevision || review.scopeRevision !== scope.revision ||
         review.catalogVersion !== body.catalogVersion || estimate.scopeRevision !== scope.revision ||
@@ -180,9 +180,9 @@ export class DemoApi implements ScopehatchApi {
   }
   async export(id: string, revision: number): Promise<ProposalExport> {
     const record = this.record(id)
-    const scope = this.latest(record.scopes)
-    const estimate = this.latest(record.estimates)
-    const review = this.latest(record.reviews)
+    const scope = this.latest(record.scopes)!
+    const estimate = this.latest(record.estimates)!
+    const review = this.latest(record.reviews)!
     if (!scope || scope.revision !== revision || !estimate || estimate.scopeRevision !== revision ||
         estimate.state !== 'ready' || !review || review.scopeRevision !== revision ||
         review.catalogVersion !== estimate.catalogVersion || review.state !== 'approved')
