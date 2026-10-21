@@ -7,7 +7,18 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "npm run test:unit",
+    "test:core": "node --test test/*.test.mjs",
+    "test:unit": "npm run test:core && npm run test --workspaces --if-present && node --test tests/evaluations/*.test.mjs",
+    "test:eval": "node tests/evaluations/runner.mjs --strict",
+    "test:db": "npm run test --workspace @scopehatch/persistence",
+    "test:browser": "npm run test:e2e --workspace @scopehatch/web",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "demo": "node examples/demo.mjs"
-  }
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }
