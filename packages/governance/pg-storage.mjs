@@ -47,6 +47,35 @@ export function createPostgresGovernanceStorage(pool, principal) {
               row.createdAt,row.suggestionResult?JSON.stringify(row.suggestionResult):null]);
           if(result.rowCount!==1)throw Object.assign(new Error('Immutable reservation mismatch'),{code:'IDEMPOTENCY_CONFLICT'});
         },
+        async assertCurrentSource(input) {
+          // Lock the tenant row, used by intake/scope/catalog writers, to avoid
+          // approving a suggestion against a revision that changes mid-commit.
+          await client.query('SELECT id FROM scopehatch.tenants WHERE id=$1 FOR UPDATE',[tenantId]);
+          const r=await client.query(`
+            SELECT i.brief, COALESCE(s.revision,0)::int AS "scopeRevision",
+              COALESCE(v.version,0)::int AS "catalogVersion"
+            FROM scopehatch.projects p
+            JOIN LATERAL (
+              SELECT brief FROM scopehatch.intakes
+              WHERE tenant_id=p.tenant_id AND project_id=p.id
+              ORDER BY revision DESC LIMIT 1
+            ) i ON true
+            LEFT JOIN LATERAL (
+              SELECT revision FROM scopehatch.scope_revisions
+              WHERE tenant_id=p.tenant_id AND project_id=p.id
+              ORDER BY revision DESC LIMIT 1
+            ) s ON true
+            LEFT JOIN LATERAL (
+              SELECT version FROM scopehatch.catalog_versions
+              WHERE tenant_id=p.tenant_id ORDER BY version DESC LIMIT 1
+            ) v ON true
+            WHERE p.tenant_id=$1 AND p.id=$2`,[tenantId,input.projectId]);
+          const latest=r.rows[0];
+          if(!latest||latest.brief!==input.brief||
+              latest.scopeRevision!==input.scopeRevision||
+              latest.catalogVersion!==input.catalogVersion)
+            throw Object.assign(new Error('Inference source changed'),{code:'STALE_REVISION'});
+        },
         async listRoutes() {
           const r=await client.query('SELECT tenant_id AS "tenantId",provider_id AS "providerId",model,enabled,capabilities,context_window AS "contextWindow",residency,currency,input_per_million_minor::text AS "inputPerMillionMinor",output_per_million_minor::text AS "outputPerMillionMinor",priority,timeout_ms AS "timeoutMs" FROM scopehatch.inference_routes WHERE tenant_id=$1 AND enabled=true',[tenantId]);
           return r.rows;
