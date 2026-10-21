@@ -291,8 +291,8 @@ export function createPersistence(pool) {
         const version = r.rows[0].version + 1;
         const catalog = validateCatalog({ tenantId: tenant, currency, version, services });
         await q(
-          'INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by) VALUES($1,$2,$3,$4)',
-          [tenant, version, currency, ctx.actorId]
+          'INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by,service_count) VALUES($1,$2,$3,$4,$5)',
+          [tenant, version, currency, ctx.actorId, catalog.services.length]
         );
         for (const s of catalog.services)
           await q(
@@ -318,8 +318,8 @@ export function createPersistence(pool) {
           brief: intake.brief, deliverables, unknowns
         });
         await q(
-          'INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,author_id,unknowns) VALUES($1,$2,$3,$4,$5,$6::jsonb)',
-          [tenant, projectId, revision, intake.revision, ctx.actorId, JSON.stringify(scope.unknowns)]
+          'INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)',
+          [tenant, projectId, revision, intake.revision, ctx.actorId, JSON.stringify(scope.unknowns), scope.deliverables.length]
         );
         for (const [index, d] of scope.deliverables.entries())
           await q(
@@ -420,6 +420,104 @@ export function createPersistence(pool) {
           requestId: a.request_id, outcome: a.outcome, metadata: a.metadata, createdAt: a.created_at
         }));
         return { items, nextCursor: hasMore ? items.at(-1).id : null };
+      }
+      async function recordUsage({
+        projectId = null, provider, model, status = 'unknown',
+        inputTokens = null, outputTokens = null, requestId = randomUUID()
+      } = {}) {
+        if (status !== 'unknown' && status !== 'reported')
+          reject('INVALID_INPUT', 'unsupported usage status');
+        if (status === 'unknown' && (inputTokens !== null || outputTokens !== null))
+          reject('INVALID_INPUT', 'unknown usage cannot be converted to zero');
+        if (status === 'reported' && inputTokens === null && outputTokens === null)
+          reject('INVALID_INPUT', 'reported usage needs measured tokens');
+        if (inputTokens !== null) integer(inputTokens, 'inputTokens');
+        if (outputTokens !== null) integer(outputTokens, 'outputTokens');
+        if (projectId !== null) await projectRow(projectId);
+        const id = randomUUID();
+        await q(
+          'INSERT INTO scopehatch.model_usage_events' +
+          '(tenant_id,id,project_id,actor_id,provider,model,status,input_tokens,output_tokens,request_id)' +
+          ' VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+          [tenant, id, projectId, ctx.actorId, string(provider, 'provider'),
+            string(model, 'model'), status, inputTokens, outputTokens,
+            string(requestId, 'requestId')]
+        );
+        return { id, tenantId: tenant, projectId, status, provider, model,
+          inputTokens, outputTokens };
+      }
+      async function listUsage({ projectId, limit = 50 } = {}) {
+        if (projectId !== undefined) await projectRow(projectId);
+        integer(limit, 'limit', 1);
+        if (limit > 100) reject('INVALID_INPUT', 'limit maximum 100');
+        const r = await q(
+          'SELECT id,tenant_id,project_id,provider,model,status,input_tokens,output_tokens,request_id,created_at ' +
+          'FROM scopehatch.model_usage_events WHERE tenant_id=$1' +
+          (projectId === undefined ? '' : ' AND project_id=$2') +
+          ' ORDER BY created_at DESC,id DESC LIMIT 
+        string(key, 'idempotency key');
+        if (key.length > 255) reject('INVALID_INPUT', 'idempotency key too long');
+        string(operation, 'operation');
+        if (typeof execute !== 'function') reject('INVALID_INPUT', 'execute callback required');
+        const hash = digest({ operation, payload });
+        // Advisory lock avoids a temporary, mutable "processing" row.
+        // Even hash collisions only cause additional serialization.
+        await q('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [tenant + '\x1f' + key]);
+        const existing = await q(
+          'SELECT * FROM scopehatch.idempotency_records WHERE tenant_id=$1 AND key=$2',
+          [tenant, key]
+        );
+        if (existing.rowCount) {
+          const record = existing.rows[0];
+          if (record.request_hash !== hash || record.operation !== operation ||
+              record.actor_id !== ctx.actorId)
+            reject('IDEMPOTENCY_CONFLICT', 'key was previously used for another request or actor');
+          return { replayed: true, result: record.response };
+        }
+        const result = await execute(repository);
+        // JSON serialization is intentional: stored response is the replay authority.
+        if (result === undefined) reject('INVALID_INPUT', 'idempotent result must be JSON serializable');
+        await q(
+          'INSERT INTO scopehatch.idempotency_records(tenant_id,key,actor_id,operation,request_hash,response) VALUES($1,$2,$3,$4,$5,$6::jsonb)',
+          [tenant, key, ctx.actorId, operation, hash, JSON.stringify(result)]
+        );
+        return { replayed: false, result };
+      }
+      const repository = Object.freeze({
+        context: ctx, getProject, createProject, createIntake, createCatalog, getCatalog,
+        listCatalogs, createScope, getScope, createEstimate, getEstimate,
+        submitReview, getReview, listReviews, approveReview, exportApproved,
+        listAudit, recordUsage, listUsage, idempotent
+      });
+      const result = await work(repository);
+      await client.query('COMMIT');
+      inTransaction = false;
+      return result;
+    } catch (error) {
+      if (inTransaction) {
+        try { await client.query('ROLLBACK'); } catch { /* original failure is authoritative */ }
+      }
+      if (isUnique(error)) throw new PersistenceError('CONFLICT', 'duplicate record or revision');
+      if (error?.code === '23503') throw new PersistenceError('NOT_FOUND', 'referenced object unavailable');
+      if (error?.code === '42501') throw new PersistenceError('FORBIDDEN', 'database authorization rejected');
+      if (error?.code === '23514') throw new PersistenceError('STALE_REVISION', 'database constraint or stale revision');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  return Object.freeze({ withPrincipal });
+}
+ +
+          (projectId === undefined ? '2' : '3'),
+          projectId === undefined ? [tenant, limit] : [tenant, projectId, limit]
+        );
+        return r.rows.map(row => ({
+          id: row.id, tenantId: row.tenant_id, projectId: row.project_id,
+          provider: row.provider, model: row.model, status: row.status,
+          inputTokens: minor(row.input_tokens), outputTokens: minor(row.output_tokens),
+          requestId: row.request_id, createdAt: row.created_at
+        }));
       }
       async function idempotent({ key, operation, payload, execute } = {}) {
         string(key, 'idempotency key');
