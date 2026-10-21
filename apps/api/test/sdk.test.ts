@@ -27,6 +27,7 @@ test('published SDK can run the authenticated two-actor workflow on durable Post
     .setSubject(subject).setIssuedAt().setExpirationTime('10m').sign(privateKey);
   const transport=async (input:RequestInfo|URL,init?:RequestInit)=>{
     const url=new URL(String(input));
+    try {
     const response=await app.inject({
       method:(init?.method??'GET') as 'GET'|'POST',url:url.pathname+url.search,
       headers:init?.headers as Record<string,string>??{},
@@ -34,6 +35,11 @@ test('published SDK can run the authenticated two-actor workflow on durable Post
     });
     return new Response(response.body,{status:response.statusCode,
       headers:{'content-type':response.headers['content-type']?.toString()??'application/json'}});
+    } catch (e) {
+      // Only the exception class is exposed to CI, never JWTs or payloads.
+      process.stderr.write('SDK_TEST_TRANSPORT_EXCEPTION '+(e instanceof Error?e.name:'unknown')+'\\n');
+      throw e;
+    }
   };
   const op=new ScopehatchClient({
     baseUrl:'http://localhost:3998',credentials:staticBearerToken(await token('a-operator')),
