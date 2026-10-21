@@ -79,6 +79,8 @@ jobs:
           umask 077
           printf '%s' 'scopehatch_integration_admin_ci_pw_2026' > deploy/secrets/postgres_password
           printf '%s' 'scopehatch_integration_runtime_ci_pw_2026' > deploy/secrets/postgres_runtime_password
+          sudo chown 1000:1000 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+          chmod 0400 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
           cp .env.example .env
           sed -i 's#https://issuer.example.invalid/#https://identity.integration.invalid/#' .env
           sed -i 's#https://issuer.example.invalid/.well-known/jwks.json#https://identity.integration.invalid/jwks.json#' .env
@@ -98,7 +100,9 @@ jobs:
             sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname='\''scopehatch_runtime'\''"' | grep -q "f|f"'
       - name: Inspect startup failure without printing credentials
         if: failure()
-        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml ps
+        run: |
+          docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml ps
+          docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml logs --no-color --tail=80 migrate api postgres
       - name: Stop fixture environment
         if: always()
         run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml down --volumes --remove-orphans
