@@ -70,8 +70,8 @@ export function tokenCostMinor(price, usage) {
 }
 
 function requireTenant(tenantId) { return ident(tenantId, 'tenantId'); }
-function readAccount(tx, expectedCurrency) {
-  const a = tx.getAccount();
+async function readAccount(tx, expectedCurrency) {
+  const a = await tx.getAccount();
   if (!a) fail('BUDGET_NOT_CONFIGURED', 'Budget not configured', 503);
   if (currency(a.currency) !== expectedCurrency) fail('CURRENCY_MISMATCH', 'Budget currency mismatch', 409);
   const limit = amount(a.limitMinor, 'limitMinor'); const held = amount(a.heldMinor, 'heldMinor'); const spent = amount(a.spentMinor, 'spentMinor');
@@ -83,14 +83,14 @@ function publicReservation(r) {
     currency: r.currency, reservedMinor: r.reservedMinor, costMinor: r.costMinor,
     usage: r.usage, dispatched: r.dispatched };
 }
-function eventOnce(tx, tenantId, eventId, reservationId, kind, payload) {
+async function eventOnce(tx, tenantId, eventId, reservationId, kind, payload) {
   ident(eventId, 'eventId'); const fingerprint = digest({ tenantId, reservationId, kind, payload });
-  const prior = tx.getEvent(eventId);
+  const prior = await tx.getEvent(eventId);
   if (prior) {
     if (prior.fingerprint !== fingerprint) fail('IDEMPOTENCY_CONFLICT', 'Event ID reused with different contents', 409);
     return true;
   }
-  tx.putEvent({ tenantId, id: eventId, reservationId, kind, fingerprint });
+  await tx.putEvent({ tenantId, id: eventId, reservationId, kind, fingerprint });
   return false;
 }
 
@@ -108,13 +108,13 @@ export class GovernanceEngine {
     const routes = eligibleProviders({ tenantId, policy, candidates, capability, inputTokens, outputTokens, residency, circuit: this.circuit });
     const intent = digest({ requestDigest, capability, inputTokens, outputTokens, residency: residency ?? null });
     return this.storage.withTenantTransaction(tenantId, async tx => {
-      const previous = tx.getReservationByKey(idempotencyKey);
+      const previous = await tx.getReservationByKey(idempotencyKey);
       if (previous) {
         if (previous.intent !== intent) fail('IDEMPOTENCY_CONFLICT', 'Key reused for different request', 409);
         return { ...publicReservation(previous), replay: true };
       }
       if (!routes.length) fail('NO_ELIGIBLE_PROVIDER', 'No eligible provider for requested capability', 503);
-      const account = readAccount(tx, policy.currency);
+      const account = await readAccount(tx, policy.currency);
       const choices = routes.map(r => ({ route: r, cost: amount(tokenCostMinor(r.price, { inputTokens, outputTokens })) }));
       const choice = choices.find(x => account.spent + account.held + x.cost <= account.limit);
       if (!choice) fail('QUOTA_EXCEEDED', 'Budget cannot cover reserved inference usage', 429);
@@ -123,8 +123,8 @@ export class GovernanceEngine {
         providerId: r.providerId, model: r.model, currency: r.currency, price: r.price,
         reservedMinor: String(choice.cost), costMinor: null, usage: { status: 'unknown' },
         status: 'reserved', dispatched: false, createdAt: this.clock() };
-      tx.putAccount({ ...account, limitMinor: String(account.limit), spentMinor: String(account.spent), heldMinor: held });
-      tx.putReservation(reservation);
+      await tx.putAccount({ ...account, limitMinor: String(account.limit), spentMinor: String(account.spent), heldMinor: held });
+      await tx.putReservation(reservation);
       return { ...publicReservation(reservation), replay: false };
     });
   }
@@ -132,12 +132,12 @@ export class GovernanceEngine {
   async markDispatched({ tenantId, reservationId }) {
     requireTenant(tenantId); ident(reservationId, 'reservationId');
     return this.storage.withTenantTransaction(tenantId, async tx => {
-      const r = tx.getReservationById(reservationId);
+      const r = await tx.getReservationById(reservationId);
       if (!r) fail('NOT_FOUND', 'Reservation not found', 404);
       if (r.status === 'dispatched') return publicReservation(r);
       if (r.status !== 'reserved') fail('INVALID_TRANSITION', 'Reservation cannot be dispatched', 409);
       const next = { ...r, status: 'dispatched', dispatched: true };
-      tx.putReservation(next); return publicReservation(next);
+      await tx.putReservation(next); return publicReservation(next);
     });
   }
 
@@ -145,15 +145,15 @@ export class GovernanceEngine {
   async release({ tenantId, reservationId, eventId, confirmedNotBilled = false }) {
     requireTenant(tenantId); ident(reservationId, 'reservationId');
     return this.storage.withTenantTransaction(tenantId, async tx => {
-      const r = tx.getReservationById(reservationId);
+      const r = await tx.getReservationById(reservationId);
       if (!r) fail('NOT_FOUND', 'Reservation not found', 404);
-      const replay = eventOnce(tx, tenantId, eventId, reservationId, 'release', { confirmedNotBilled });
+      const replay = await eventOnce(tx, tenantId, eventId, reservationId, 'release', { confirmedNotBilled });
       if (replay) return { ...publicReservation(r), replay: true };
       if (r.status !== 'reserved' && !(confirmedNotBilled && r.status === 'dispatched')) fail('INVALID_TRANSITION', 'Cannot release potentially billable usage', 409);
-      const a = readAccount(tx, r.currency);
-      tx.putAccount({ ...a, limitMinor: String(a.limit), spentMinor: String(a.spent), heldMinor: asAmount(a.held - amount(r.reservedMinor)) });
+      const a = await readAccount(tx, r.currency);
+      await tx.putAccount({ ...a, limitMinor: String(a.limit), spentMinor: String(a.spent), heldMinor: asAmount(a.held - amount(r.reservedMinor)) });
       const next = { ...r, status: 'released', costMinor: confirmedNotBilled ? '0' : null };
-      tx.putReservation(next); return { ...publicReservation(next), replay: false };
+      await tx.putReservation(next); return { ...publicReservation(next), replay: false };
     });
   }
 
@@ -165,18 +165,18 @@ export class GovernanceEngine {
       count(usage.inputTokens, 'inputTokens'); count(usage.outputTokens, 'outputTokens');
     } else if (Object.keys(usage).some(k => k !== 'status')) fail('INVALID_USAGE', 'Unknown usage cannot contain assumed counts');
     return this.storage.withTenantTransaction(tenantId, async tx => {
-      const r = tx.getReservationById(reservationId);
+      const r = await tx.getReservationById(reservationId);
       if (!r) fail('NOT_FOUND', 'Reservation not found', 404);
-      if (eventOnce(tx, tenantId, eventId, reservationId, 'settle', usage)) return { ...publicReservation(r), replay: true };
+      if (await eventOnce(tx, tenantId, eventId, reservationId, 'settle', usage)) return { ...publicReservation(r), replay: true };
       if (r.status !== 'dispatched' && r.status !== 'unknown') fail('INVALID_TRANSITION', 'Reservation is not eligible for settlement', 409);
       if (usage.status === 'unknown') {
         const next = { ...r, status: 'unknown', usage: { status: 'unknown' }, costMinor: null };
-        tx.putReservation(next); return { ...publicReservation(next), replay: false };
+        await tx.putReservation(next); return { ...publicReservation(next), replay: false };
       }
-      const cost = amount(tokenCostMinor(r.price, usage)); const a = readAccount(tx, r.currency);
+      const cost = amount(tokenCostMinor(r.price, usage)); const a = await readAccount(tx, r.currency);
       const next = { ...r, status: 'settled', costMinor: String(cost), usage: { status: 'reported', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } };
-      tx.putAccount({ ...a, limitMinor: String(a.limit), heldMinor: asAmount(a.held - amount(r.reservedMinor)), spentMinor: asAmount(a.spent + cost) });
-      tx.putReservation(next); return { ...publicReservation(next), replay: false };
+      await tx.putAccount({ ...a, limitMinor: String(a.limit), heldMinor: asAmount(a.held - amount(r.reservedMinor)), spentMinor: asAmount(a.spent + cost) });
+      await tx.putReservation(next); return { ...publicReservation(next), replay: false };
     });
   }
 
@@ -185,14 +185,14 @@ export class GovernanceEngine {
     requireTenant(tenantId); ident(reservationId, 'reservationId'); ident(evidenceRef, 'evidenceRef');
     const cost = amount(billedCostMinor, 'billedCostMinor');
     return this.storage.withTenantTransaction(tenantId, async tx => {
-      const r = tx.getReservationById(reservationId);
+      const r = await tx.getReservationById(reservationId);
       if (!r) fail('NOT_FOUND', 'Reservation not found', 404);
-      if (eventOnce(tx, tenantId, eventId, reservationId, 'reconcile', { billedCostMinor, evidenceRef })) return { ...publicReservation(r), replay: true };
+      if (await eventOnce(tx, tenantId, eventId, reservationId, 'reconcile', { billedCostMinor, evidenceRef })) return { ...publicReservation(r), replay: true };
       if (r.status !== 'unknown') fail('INVALID_TRANSITION', 'Only unknown usage may be reconciled', 409);
-      const a = readAccount(tx, r.currency);
-      tx.putAccount({ ...a, limitMinor: String(a.limit), heldMinor: asAmount(a.held - amount(r.reservedMinor)), spentMinor: asAmount(a.spent + cost) });
+      const a = await readAccount(tx, r.currency);
+      await tx.putAccount({ ...a, limitMinor: String(a.limit), heldMinor: asAmount(a.held - amount(r.reservedMinor)), spentMinor: asAmount(a.spent + cost) });
       const next = { ...r, status: 'settled', usage: { status: 'unknown' }, costMinor: String(cost), reconciliationEvidenceRef: evidenceRef };
-      tx.putReservation(next); return { ...publicReservation(next), replay: false };
+      await tx.putReservation(next); return { ...publicReservation(next), replay: false };
     });
   }
 }
