@@ -67,7 +67,9 @@ jobs:
       - name: Assert SQL isolation, write authorization and approval atomics
         run: npm run test:db
       - name: Postgres and Fastify integration checks
-        run: node --experimental-transform-types --test apps/api/test/postgres.test.ts
+        run: |
+          node --experimental-transform-types --test apps/api/test/postgres.test.ts
+          node --experimental-transform-types --test apps/api/test/inference.test.ts
 
   compose-smoke:
     runs-on: ubuntu-latest
