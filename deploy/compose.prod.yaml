@@ -23,7 +23,7 @@ x-app-env: &app-env
 x-app-security: &app-security
   user: "1000:1000"
   read_only: true
-  tmpfs: [/tmp:size=64m,mode=1777]
+  tmpfs: [/tmp]
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
   init: true
@@ -99,7 +99,7 @@ services:
     restart: unless-stopped
     user: "101:101"
     read_only: true
-    tmpfs: [/tmp:size=32m,mode=1777]
+    tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     init: true
