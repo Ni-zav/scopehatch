@@ -109,11 +109,6 @@ export function createInferenceGateway(pool: Pool, store: PersistencePort) {
         outputTokens:2048
       };
       const engine=new GovernanceEngine({storage});
-      const currentProject=async()=>store.transaction(principal,async tx=>({
-        project:await tx.getProject(projectId),
-        scope:await tx.getLatestScope(projectId),
-        catalog:(await tx.listCatalogs())[0]
-      }));
       const result=await executeGoverned({
         engine,request,traceId:sha(requestId).slice(0,32),maxAttempts:1,
         call:async ({providerId,model,signal}:{providerId:string;model:string;signal:AbortSignal})=>{
@@ -146,21 +141,22 @@ export function createInferenceGateway(pool: Pool, store: PersistencePort) {
         if(replay?.suggestionResult)return {status:200,body:replay.suggestionResult};
         denied('INFERENCE_IN_PROGRESS',409,'Prior inference is pending or requires reconciliation');
       }
-      const current=await currentProject();
-      if(current.project?.brief!==initial.project.brief ||
-        (current.scope?.revision??0)!==(initial.scope?.revision??0) ||
-        current.catalog?.version!==initial.catalog.version)
-        denied('STALE_REVISION',409,'Source or catalog changed while inference was running');
       const value=result.value;
       const body={suggestion:{suggestedDeliverables:value.suggestedDeliverables,
         unknowns:value.unknowns},provenance:value.provenance,
         model:value.model,usage:value.usage};
       await storage.withTenantTransaction(principal.tenantId,async(tx:{
         getReservationById(id:string):Promise<{status:string;tenantId:string}|null>;
+        assertCurrentSource(input:{projectId:string;brief:string;scopeRevision:number;catalogVersion:number}):Promise<void>;
         putReservation(x:unknown):Promise<void>;
       })=>{
         const reserved=await tx.getReservationById(result.reservation.id);
         if(!reserved)denied('NOT_FOUND',404,'Reservation missing');
+        await tx.assertCurrentSource({
+          projectId,brief:initial.project.brief,
+          scopeRevision:initial.scope?.revision??0,
+          catalogVersion:initial.catalog.version
+        });
         await tx.putReservation({...reserved,suggestionResult:body});
       });
       return {status:200,body};
