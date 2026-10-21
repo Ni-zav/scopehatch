@@ -71,6 +71,7 @@ services:
     stop_grace_period: 30s
 
   worker:
+    profiles: [worker]
     <<: *app-security
     build: *app-build
     image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:local
