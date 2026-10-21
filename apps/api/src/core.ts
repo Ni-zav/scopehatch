@@ -52,6 +52,11 @@ export class ApplicationService {
     if (!key || key.length > 200 || !/^[\x21-\x7E]+$/.test(key)) fail('IDEMPOTENCY_KEY_REQUIRED', 422, 'A valid Idempotency-Key is required');
     const identity = [principal.tenantId, principal.id, method, path, key].join('\0');
     const inputHash = digest(body);
+    if (this.store.idempotent) {
+      return this.store.idempotent(principal, {
+        key, operation: method + ' ' + path, payload: body, execute: operation
+      });
+    }
     return this.store.transaction(principal, async tx => {
       const previous = await tx.getIdempotency(identity);
       if (previous) {
@@ -90,6 +95,10 @@ export class ApplicationService {
     return this.write(principal, 'POST', '/v1/projects/' + id + '/scopes', key, data, async tx => {
       const project = requireProject(await tx.getProject(id));
       const prior = await tx.getLatestScope(id);
+      for (const d of data.deliverables) {
+        if (d.source === 'brief' && (!d.evidence.trim() || !project.brief.includes(d.evidence)))
+          fail('EVIDENCE_NOT_IN_BRIEF', 422, 'Brief evidence must quote the source text exactly');
+      }
       const scope: Scope = createScopeRevision({ tenantId: principal.tenantId, projectId: id,
         authorId: principal.id, revision: (prior?.revision ?? 0) + 1, brief: project.brief,
         deliverables: data.deliverables, unknowns: data.unknowns });
@@ -141,6 +150,7 @@ export class ApplicationService {
     });
   }
   export(principal: Principal, id: string, revision: number) {
+    if (this.store.exportApproved) return this.store.exportApproved(principal, id, revision);
     return this.read(principal, async tx => {
       requireProject(await tx.getProject(id));
       const scope = requireCurrent(await tx.getLatestScope(id), revision);
@@ -180,7 +190,10 @@ export function normalizeError(error: unknown): ApiError {
     const code = error.code;
     const statuses: Record<string, number> = {
       INVALID_INPUT: 422, DUPLICATE_SERVICE: 422, MONEY_OVERFLOW: 422,
-      STALE_ESTIMATE: 409, STALE_REVIEW: 409, APPROVAL_REQUIRED: 409,
+      STALE_ESTIMATE: 409, STALE_REVIEW: 409, STALE_REVISION: 409,
+      CONFLICT: 409, IDEMPOTENCY_CONFLICT: 409, ALREADY_EXISTS: 409,
+      NOT_FOUND: 404, INVALID_INPUT: 422, EVIDENCE_NOT_IN_BRIEF: 422,
+      APPROVAL_REQUIRED: 409,
       BLOCKED_ESTIMATE: 409, SELF_APPROVAL: 403, FORBIDDEN: 403, TENANT_MISMATCH: 404
     };
     if (statuses[code]) return new ApiError(code, statuses[code],
