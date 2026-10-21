@@ -248,7 +248,7 @@ test('concurrent scope replacement and approval cannot export a stale quote', { 
   const operations = await Promise.allSettled([
     store.withPrincipal(a, tx => tx.createScope({
       projectId, deliverables: [
-        { serviceId: 'render', quantity: 2, evidence: 'two images', source: 'brief' }
+        { serviceId: 'render', quantity: 2, evidence: 'one image', source: 'brief' }
       ]
     })),
     store.withPrincipal(reviewerA, tx => tx.approveReview({
