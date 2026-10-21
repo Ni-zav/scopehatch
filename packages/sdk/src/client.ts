@@ -124,7 +124,7 @@ export class ScopehatchClient {
             ? this.workspaceId() : this.workspaceId;
           if(selection !== undefined && selection !== null && selection !== ''){
             if(typeof selection !== 'string' || selection.length > 200 ||
-               !/^[\\x20-\\x7E]+$/.test(selection))
+               !/^[\x20-\x7E]+$/.test(selection))
               throw new ScopehatchConfigurationError('Invalid workspace selector');
             headers['X-Workspace-Id'] = selection;
           }
@@ -141,7 +141,7 @@ export class ScopehatchClient {
           ]);
         } catch (error) {
           if (controller.signal.aborted) throw abortError();
-          if (error instanceof ScopehatchAuthenticationError) throw error;
+          if (error instanceof ScopehatchAuthenticationError || error instanceof ScopehatchConfigurationError) throw error;
           if (attempt < retries) { await this.backoff(attempt, undefined, cancelled); continue; }
           throw new ScopehatchNetworkError();
         }
