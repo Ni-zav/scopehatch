@@ -166,11 +166,22 @@ try{
     const projectId=descriptor.replace(/^PROJECT\s*\/\s*/i,'').trim().toLowerCase();
     if(!/^[0-9a-f-]{36}$/i.test(projectId))
       throw Error('Could not identify created PostgreSQL project from UI: '+descriptor);
-    await page.getByRole('button',{name:/Add deliverable/}).click();
-    await page.getByLabel('Catalog service').last().selectOption('render');
+    // The model fixture supplies a source-backed suggestion, not a mutable
+    // scope or an assumed quantity. The user must explicitly accept and edit it.
+    await page.getByRole('button',{name:/Suggest from original brief/}).click();
+    await page.getByRole('heading',{name:/Advisory output/}).waitFor({state:'visible'});
+    let unsaved=await ports.store.transaction(
+      {id:'a-operator',tenantId:'studio-a',roles:['operator']},
+      async(tx)=>tx.getLatestScope(projectId));
+    if(unsaved!==null) throw Error('Model suggestion illegally created a scope revision');
+    await page.getByRole('button',{name:/Copy suggestions into editable draft/}).click();
     await page.getByRole('spinbutton',{name:'Quantity'}).fill('2');
-    await page.getByLabel('Evidence type').last().selectOption('brief');
+    await page.getByRole('textbox',{name:/One unresolved requirement per line/}).fill('');
     await page.getByRole('textbox',{name:'Exact brief excerpt'}).fill('two images');
+    unsaved=await ports.store.transaction(
+      {id:'a-operator',tenantId:'studio-a',roles:['operator']},
+      async(tx)=>tx.getLatestScope(projectId));
+    if(unsaved!==null)throw Error('Editing the AI suggestion mutated approved source data');
     await page.getByRole('button',{name:/Save first scope & estimate/}).click();
     await page.getByText('Ready for review',{exact:true}).waitFor({state:'visible'});
     await page.getByRole('button',{name:/Request review/}).click();
