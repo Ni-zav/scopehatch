@@ -64,6 +64,7 @@ export class ScopehatchClient {
   private readonly baseUrl: string;
   private readonly credentials: CredentialProvider;
   private readonly transport: FetchTransport;
+  private readonly workspaceId?: string | (() => string | null);
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryDelayMs: number;
@@ -77,6 +78,7 @@ export class ScopehatchClient {
       throw new ScopehatchConfigurationError('A credential provider is required');
     }
     this.credentials = options.credentials;
+    this.workspaceId = options.workspaceId;
     this.transport = options.fetch ?? globalThis.fetch.bind(globalThis);
     if (typeof this.transport !== 'function') throw new ScopehatchConfigurationError('A fetch transport is required');
     this.timeoutMs = wholeNumber(options.timeoutMs ?? DEFAULT_TIMEOUT, 'timeoutMs', 1);
@@ -118,6 +120,14 @@ export class ScopehatchClient {
             Authorization: `Bearer ${token}`,
             Accept: 'application/json',
           };
+          const selection = typeof this.workspaceId === 'function'
+            ? this.workspaceId() : this.workspaceId;
+          if(selection !== undefined && selection !== null && selection !== ''){
+            if(typeof selection !== 'string' || selection.length > 200 ||
+               !/^[\\x20-\\x7E]+$/.test(selection))
+              throw new ScopehatchConfigurationError('Invalid workspace selector');
+            headers['X-Workspace-Id'] = selection;
+          }
           if (method === 'POST') {
             headers['Content-Type'] = 'application/json';
             headers['Idempotency-Key'] = idempotencyKey!;
