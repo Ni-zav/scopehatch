@@ -197,6 +197,10 @@ export function normalizeError(error: unknown): ApiError {
       BUDGET_NOT_CONFIGURED: 503, NO_ELIGIBLE_PROVIDER: 503,
       QUOTA_EXCEEDED: 429, INFERENCE_IN_PROGRESS: 409,
       PROVIDER_FAILED: 503, PROVIDER_UNAVAILABLE: 503,
+      PROVIDER_AUTH: 503, INVALID_PROVIDER_CONFIG: 503,
+      INVALID_MODEL_OUTPUT: 502, UNVERIFIABLE_EVIDENCE: 502,
+      UNVERIFIABLE_QUANTITY: 502, OUTPUT_TOO_LARGE: 502,
+      TIMEOUT: 504, INVALID_USAGE: 422, INVALID_TRANSITION: 409,
       APPROVAL_REQUIRED: 409,
       BLOCKED_ESTIMATE: 409, SELF_APPROVAL: 403, FORBIDDEN: 403, TENANT_MISMATCH: 404
     };
@@ -206,6 +210,8 @@ export function normalizeError(error: unknown): ApiError {
       statuses[code] === 422 ? 'Invalid request data' :
       statuses[code] === 429 ? 'Inference budget exceeded' :
       statuses[code] === 503 ? 'Governed inference unavailable' :
+      statuses[code] === 502 ? 'Inference response failed evidence validation' :
+      statuses[code] === 504 ? 'Inference provider timed out; spending is being reconciled' :
       'Operation conflicts with current state');
   }
   return new ApiError('INTERNAL_ERROR', 500, 'Internal server error');
