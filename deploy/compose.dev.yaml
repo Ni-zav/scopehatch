@@ -95,6 +95,8 @@ services:
         VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-}
         VITE_OIDC_AUTHORIZATION_ENDPOINT: ${VITE_OIDC_AUTHORIZATION_ENDPOINT:-}
         VITE_OIDC_TOKEN_ENDPOINT: ${VITE_OIDC_TOKEN_ENDPOINT:-}
+    environment:
+      SCOPEHATCH_API_UPSTREAM: http://api:3000
     command: ["npm", "run", "dev:api", "--workspace", "@scopehatch/web", "--", "--host", "0.0.0.0", "--port", "5173"]
     user: "1000:1000"
     init: true
