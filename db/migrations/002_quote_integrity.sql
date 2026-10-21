@@ -50,7 +50,8 @@ DECLARE expected_lines jsonb;
 DECLARE invalid_lines integer;
 DECLARE num_lines integer;
 BEGIN
-  IF NEW.created_by IS DISTINCT FROM scopehatch.actor_id() THEN
+  IF NEW.created_by IS DISTINCT FROM scopehatch.actor_id()
+     OR NOT scopehatch.has_role(NEW.tenant_id, ARRAY['owner','operator']) THEN
     RAISE EXCEPTION 'principal mismatch' USING ERRCODE = '42501';
   END IF;
   PERFORM 1 FROM scopehatch.tenants WHERE id = NEW.tenant_id FOR UPDATE;
