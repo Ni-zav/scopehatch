@@ -511,6 +511,7 @@ export function createPersistence(pool) {
       if (isUnique(error)) throw new PersistenceError('CONFLICT', 'duplicate record or revision');
       if (error?.code === '23503') throw new PersistenceError('NOT_FOUND', 'referenced object unavailable');
       if (error?.code === '42501') throw new PersistenceError('FORBIDDEN', 'database authorization rejected');
+      if (error?.code === '22023') throw new PersistenceError('INVALID_INPUT', 'request contains invalid data');
       if (error?.code === '23514') throw new PersistenceError('STALE_REVISION', 'database constraint or stale revision');
       throw error;
     } finally {
