@@ -101,6 +101,20 @@ export interface PersistenceRepository {
     projectId: string; revision: number; currency: string; totalMinor: number; markdown: string;
   }>;
   approveReview(input: { projectId: string; reviewId: string; requestId?: string }): Promise<Review>;
+  recordUsage(input: {
+    projectId?: string | null; provider: string; model: string;
+    status?: 'unknown' | 'reported'; inputTokens?: number | null;
+    outputTokens?: number | null; requestId?: string;
+  }): Promise<{
+    id: string; tenantId: string; projectId: string | null;
+    provider: string; model: string; status: 'unknown' | 'reported';
+    inputTokens: number | null; outputTokens: number | null;
+  }>;
+  listUsage(input?: { projectId?: string; limit?: number }): Promise<Array<{
+    id: string; tenantId: string; projectId: string | null; provider: string;
+    model: string; status: 'unknown' | 'reported'; inputTokens: number | null;
+    outputTokens: number | null; requestId: string; createdAt: Date;
+  }>>;
   listAudit(input?: { projectId?: string; before?: string; limit?: number }): Promise<{
     items: AuditEvent[]; nextCursor: string | null;
   }>;
