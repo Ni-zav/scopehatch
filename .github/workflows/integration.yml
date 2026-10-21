@@ -2,6 +2,7 @@ name: sprint 01 integration gates
 on:
   push:
     branches:
+      - main
       - integrate/s01-security-gated
   pull_request:
 jobs:
@@ -13,7 +14,7 @@ jobs:
         with:
           node-version: '22'
       - name: Resolve workspace packages
-        run: npm install --no-audit --no-fund --no-package-lock
+        run: npm ci --no-audit --no-fund
       - name: Type-check and build
         run: npm run build && npm run typecheck
       - name: Domain and package unit tests
@@ -58,7 +59,7 @@ jobs:
         with:
           node-version: '22'
       - name: Resolve packages
-        run: npm install --no-audit --no-fund --no-package-lock
+        run: npm ci --no-audit --no-fund
       - name: Provision restricted user and migrations
         run: |
           umask 077
