@@ -1,0 +1,119 @@
+# Development overlay; rebuild on edit until watch mounts and Vite proxy are integrated.
+# JWT validation is NOT disabled here.
+x-dev-env: &dev-env
+  NODE_ENV: development
+  HOST: 0.0.0.0
+  PORT: "3000"
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-scopehatch}
+  POSTGRES_USER: ${POSTGRES_RUNTIME_USER:-scopehatch_runtime}
+  POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-scopehatch_admin}
+  POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-scopehatch_runtime}
+  OIDC_ISSUER: ${OIDC_ISSUER:?Set OIDC_ISSUER in .env}
+  OIDC_AUDIENCE: ${OIDC_AUDIENCE:?Set OIDC_AUDIENCE in .env}
+  OIDC_JWKS_URI: ${OIDC_JWKS_URI:?Set OIDC_JWKS_URI in .env}
+  SCOPEHATCH_INFERENCE_PROVIDER: ${SCOPEHATCH_INFERENCE_PROVIDER:-fixture}
+  SCOPEHATCH_INFERENCE_BASE_URL: ${SCOPEHATCH_INFERENCE_BASE_URL:-}
+  SCOPEHATCH_INFERENCE_MODEL: ${SCOPEHATCH_INFERENCE_MODEL:-}
+  SCOPEHATCH_INFERENCE_ALLOWED_HOSTS: ${SCOPEHATCH_INFERENCE_ALLOWED_HOSTS:-}
+  SCOPEHATCH_INFERENCE_TENANT_ID: ${SCOPEHATCH_INFERENCE_TENANT_ID:-}
+  REDIS_URL: ${REDIS_URL:-}
+  SCOPEHATCH_API_UPSTREAM: http://api:3000
+x-dev-common: &dev-common
+  user: "1000:1000"
+  init: true
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+services:
+  migrate:
+    <<: *dev-common
+    image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+      target: development
+    command: [migrate]
+    environment:
+      <<: *dev-env
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-scopehatch_admin}
+    secrets: [postgres_password, postgres_runtime_password]
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+  api:
+    <<: *dev-common
+    image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+      target: development
+    command: [api-dev]
+    environment: *dev-env
+    secrets: [postgres_runtime_password]
+    networks: [backend, frontend, egress]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${API_DEV_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "deploy/scripts/api-health.mjs"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+  worker:
+    profiles: [worker]
+    <<: *dev-common
+    image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+      target: development
+    command: [worker-dev]
+    environment: *dev-env
+    secrets: [postgres_runtime_password]
+    networks: [backend, egress]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  web:
+    image: ${COMPOSE_PROJECT_NAME:-scopehatch}-web:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      target: development
+      args:
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-}
+        VITE_OIDC_AUTHORIZATION_ENDPOINT: ${VITE_OIDC_AUTHORIZATION_ENDPOINT:-}
+        VITE_OIDC_TOKEN_ENDPOINT: ${VITE_OIDC_TOKEN_ENDPOINT:-}
+    environment:
+      SCOPEHATCH_API_UPSTREAM: http://api:3000
+    command: ["npm", "run", "dev:api", "--workspace", "@scopehatch/web", "--", "--host", "0.0.0.0", "--port", "5173"]
+    user: "1000:1000"
+    init: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_DEV_PORT:-5173}:5173"
+    networks: [frontend]
+    depends_on:
+      api:
+        condition: service_healthy
+    # Integration must configure Vite proxy /v1 and /healthz to http://api:3000.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

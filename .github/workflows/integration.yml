@@ -1,0 +1,117 @@
+name: sprint 01 integration gates
+on:
+  push:
+    branches:
+      - integrate/s01-security-gated
+  pull_request:
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Resolve workspace packages
+        run: npm install --no-audit --no-fund --no-package-lock
+      - name: Type-check and build
+        run: npm run build && npm run typecheck
+      - name: Domain and package unit tests
+        run: npm run test:unit
+      - name: Deterministic adverse evaluations
+        run: npm run test:eval
+      - name: Docker static checks
+        run: |
+          python3 -m pip install --user --break-system-packages pyyaml
+          python3 -m unittest discover -s deploy/tests -v
+          node --test deploy/tests/entrypoint.test.mjs
+      - name: Browser smoke test (fixture mode only)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:browser
+
+  postgres-security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: scopehatch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d scopehatch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/scopehatch
+      TEST_PG_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/scopehatch
+      TEST_PG_APP_URL: postgresql://scopehatch_runtime:runtime_pw_for_github_ci_only_2026@127.0.0.1:5432/scopehatch
+      POSTGRES_USER: postgres
+      POSTGRES_RUNTIME_USER: scopehatch_runtime
+      SCOPEHATCH_RUNTIME_DB_PASSWORD_FILE: /tmp/scopehatch-runtime-ci-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Resolve packages
+        run: npm install --no-audit --no-fund --no-package-lock
+      - name: Provision restricted user and migrations
+        run: |
+          umask 077
+          printf '%s' 'runtime_pw_for_github_ci_only_2026' > "$SCOPEHATCH_RUNTIME_DB_PASSWORD_FILE"
+          npm run db:migrate --workspace @scopehatch/persistence
+      - name: Assert SQL isolation, write authorization and approval atomics
+        run: npm run test:db
+      - name: Postgres and Fastify integration checks
+        run: |
+          node --experimental-transform-types --test apps/api/test/postgres.test.ts
+          node --experimental-transform-types --test apps/api/test/inference.test.ts
+          npm run build --workspace @scopehatch/sdk
+          node --experimental-transform-types --test apps/api/test/sdk.test.ts
+      - name: Browser OIDC PKCE two-actor live PostgreSQL workflow
+        run: |
+          npx playwright install --with-deps chromium
+          node --experimental-transform-types apps/api/test/browser-oidc-e2e.ts
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate test-only local credentials
+        run: |
+          mkdir -p deploy/secrets
+          umask 077
+          printf '%s' 'scopehatch_integration_admin_ci_pw_2026' > deploy/secrets/postgres_password
+          printf '%s' 'scopehatch_integration_runtime_ci_pw_2026' > deploy/secrets/postgres_runtime_password
+          sudo chown 1000:1000 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+          sudo chmod 0400 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+          cp .env.example .env
+          sed -i 's#https://issuer.example.invalid/#https://identity.integration.invalid/#' .env
+          sed -i 's#https://issuer.example.invalid/.well-known/jwks.json#https://identity.integration.invalid/jwks.json#' .env
+      - name: Compose parse and preflight
+        run: |
+          sh deploy/scripts/preflight.sh prod
+          sh deploy/scripts/preflight.sh dev
+      - name: Build immutable Docker images
+        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml build
+      - name: Boot restricted Postgres, migration, API, and web
+        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml up -d --wait --wait-timeout 150
+      - name: Verify HTTP health and runtime role
+        run: |
+          curl --fail --silent http://127.0.0.1:8080/_healthz
+          curl --fail --silent http://127.0.0.1:8080/healthz
+          docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml exec -T postgres \
+            psql -U scopehatch_admin -d scopehatch -tAc \
+            "SELECT NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname = 'scopehatch_runtime'" | grep -Fxq t
+      - name: Inspect startup failure without printing credentials
+        if: failure()
+        run: |
+          docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml ps
+          docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml logs --no-color --tail=80 migrate api postgres
+      - name: Stop fixture environment
+        if: always()
+        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml down --volumes --remove-orphans

@@ -1,0 +1,78 @@
+# Base single-host infrastructure: select exactly one app overlay (dev or prod).
+name: ${COMPOSE_PROJECT_NAME:-scopehatch}
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scopehatch}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-scopehatch_admin}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets: [postgres_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    stop_grace_period: 60s
+    shm_size: 64mb
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    profiles: [cache]
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    networks: [backend]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+
+  ollama:
+    profiles: [local-inference]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MODELS: /models
+    volumes: [ollama_models:/models]
+    networks: [backend]
+    # CPU default; no GPU device, published inference port, or Kubernetes dependency.
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging: *logging
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  postgres_runtime_password:
+    file: ./secrets/postgres_runtime_password
+volumes:
+  postgres_data:
+  ollama_models:
+networks:
+  backend:
+    internal: true
+  frontend:
+  egress:

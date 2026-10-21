@@ -1,0 +1,32 @@
+name: resolve integration workspace lockfile
+on:
+  push:
+    branches: [integrate/s01-security-gated]
+    paths:
+      - package.json
+      - apps/**/package.json
+      - packages/**/package.json
+      - .github/workflows/lockfile.yml
+permissions:
+  contents: write
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate reproducible npm workspace lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Commit exact dependency tree on integration branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "build(integration): lock exact npm workspace dependencies"
+            git push origin "HEAD:integrate/s01-security-gated"
+          fi
