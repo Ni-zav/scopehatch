@@ -41,9 +41,9 @@ test('signed operator can obtain replay-safe, evidence-backed, governed fixture 
     .setProtectedHeader({alg:'RS256',kid:jwk.kid}).setIssuer(issuer).setAudience(audience)
     .setSubject(sub).setIssuedAt().setExpirationTime('10m').sign(kp.privateKey);
   const operator=await token('a-operator'), reviewer=await token('a-reviewer'),other=await token('b-operator');
-  const call=async(method:'GET'|'POST',path:string,jwt:string,payload?:unknown,key?:string)=>{
+  const call=async(method:'GET'|'POST',path:string,jwt:string,payload?:unknown,key?:string,workspace='studio-a')=>{
     const response=await server.inject({method,url:path,headers:{
-      authorization:'Bearer '+jwt,'X-Workspace-Id':'studio-a',
+      authorization:'Bearer '+jwt,'X-Workspace-Id':workspace,
       ...(key?{'Idempotency-Key':key}:{})
     },...(payload===undefined?{}:{payload})});
     return response;
@@ -66,7 +66,7 @@ test('signed operator can obtain replay-safe, evidence-backed, governed fixture 
   assert.deepEqual(replay.json(),data);
   const review=await call('POST',route,reviewer,{},randomUUID());
   assert.equal(review.statusCode,403);
-  const cross=await call('POST',route,other,{},randomUUID());
+  const cross=await call('POST',route,other,{},randomUUID(),'studio-b');
   assert.equal(cross.statusCode,404);
   const ledger=await admin.query('SELECT status,cost_minor::text AS cost,suggestion_result FROM scopehatch.inference_reservations WHERE tenant_id=$1 AND idempotency_key=$2',
     ['studio-a',await import('node:crypto').then(c=>c.createHash('sha256').update('a-operator:'+id+':'+k).digest('hex'))]);
