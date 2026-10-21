@@ -175,3 +175,21 @@ test('negative, excess and non-integer token reports never settle as reported', 
     assert.equal(result.status, 'unknown'); assert.equal(storage.snapshot('A').account.heldMinor, '10');
   }
 });
+
+test('PostgreSQL-shaped awaited transaction methods are supported atomically', async () => {
+  const { storage } = setup(); const original = storage.withTenantTransaction.bind(storage);
+  storage.withTenantTransaction = (tenantId, fn) => original(tenantId, tx => fn({
+    getAccount: async () => tx.getAccount(), putAccount: async a => tx.putAccount(a),
+    getReservationByKey: async k => tx.getReservationByKey(k),
+    getReservationById: async id => tx.getReservationById(id),
+    putReservation: async r => tx.putReservation(r),
+    getEvent: async id => tx.getEvent(id), putEvent: async e => tx.putEvent(e)
+  }));
+  const engine = new GovernanceEngine({ storage });
+  const reservation = await engine.reserve(request());
+  await engine.markDispatched({ tenantId: 'A', reservationId: reservation.id });
+  const result = await engine.settle({ tenantId: 'A', reservationId: reservation.id, eventId: 'db-async',
+    usage: { status: 'reported', inputTokens: 2, outputTokens: 2 } });
+  assert.equal(result.costMinor, '4');
+  assert.deepEqual([storage.snapshot('A').account.heldMinor, storage.snapshot('A').account.spentMinor], ['0', '4']);
+});
