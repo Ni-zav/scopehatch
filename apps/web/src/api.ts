@@ -10,16 +10,19 @@ export type TokenProvider = () => Promise<string | null>
 export interface HttpOptions {
   baseUrl: string
   getAccessToken: TokenProvider
+  getWorkspaceId?: () => string | null
   fetchImpl?: typeof fetch
 }
 
 /** The server alone establishes tenant membership and principal roles from a verified token. */
-export function createHttpApi({ baseUrl, getAccessToken, fetchImpl = fetch }: HttpOptions): ScopehatchApi {
+export function createHttpApi({ baseUrl, getAccessToken, getWorkspaceId, fetchImpl = fetch }: HttpOptions): ScopehatchApi {
   const root = baseUrl.replace(/\/$/, '')
   async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
     const token = await getAccessToken()
     if (!token) throw new ApiError(401, 'AUTH_REQUIRED', 'Connect an OIDC session to continue. No demo identities are valid in API mode.')
     const headers: Record<string, string> = { Authorization: 'Bearer ' + token, Accept: 'application/json' }
+    const workspace = getWorkspaceId?.()?.trim()
+    if (workspace) headers['X-Workspace-Id'] = workspace
     if (method === 'POST') {
       headers['Content-Type'] = 'application/json'
       headers['Idempotency-Key'] = crypto.randomUUID()
