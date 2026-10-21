@@ -18,8 +18,8 @@ DO $seed$
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM scopehatch.catalog_versions
    WHERE tenant_id='studio-a' AND version=1) THEN
-   INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by)
-   VALUES ('studio-a',1,'IDR','a-operator');
+   INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by,service_count)
+   VALUES ('studio-a',1,'IDR','a-operator',2);
    INSERT INTO scopehatch.catalog_services(tenant_id,catalog_version,service_id,label,unit_price_minor)
    VALUES ('studio-a',1,'render','Synthetic rendering',200000),
           ('studio-a',1,'revision','Synthetic revision round',50000);
@@ -31,8 +31,8 @@ BEGIN
    INSERT INTO scopehatch.intakes(tenant_id,project_id,revision,brief,author_id)
    VALUES ('studio-a','a-demo',1,'Studio A confidential synthetic brief: two images','a-operator');
    INSERT INTO scopehatch.scope_revisions
-     (tenant_id,project_id,revision,intake_revision,author_id,unknowns)
-   VALUES ('studio-a','a-demo',1,1,'a-operator','[]');
+     (tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count)
+   VALUES ('studio-a','a-demo',1,1,'a-operator','[]',1);
    INSERT INTO scopehatch.scope_deliverables
      (tenant_id,project_id,scope_revision,line_no,service_id,quantity,evidence,source)
    VALUES ('studio-a','a-demo',1,0,'render',2,'two images','brief');
@@ -53,8 +53,8 @@ DO $seed$
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM scopehatch.catalog_versions
    WHERE tenant_id='studio-b' AND version=1) THEN
-   INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by)
-   VALUES ('studio-b',1,'USD','b-operator');
+   INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by,service_count)
+   VALUES ('studio-b',1,'USD','b-operator',1);
    INSERT INTO scopehatch.catalog_services(tenant_id,catalog_version,service_id,label,unit_price_minor)
    VALUES ('studio-b',1,'render','Synthetic rendering',30000);
  END IF;
@@ -65,8 +65,8 @@ BEGIN
    INSERT INTO scopehatch.intakes(tenant_id,project_id,revision,brief,author_id)
    VALUES ('studio-b','b-demo',1,'Studio B confidential synthetic brief: one image','b-operator');
    INSERT INTO scopehatch.scope_revisions
-     (tenant_id,project_id,revision,intake_revision,author_id,unknowns)
-   VALUES ('studio-b','b-demo',1,1,'b-operator','[]');
+     (tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count)
+   VALUES ('studio-b','b-demo',1,1,'b-operator','[]',1);
    INSERT INTO scopehatch.scope_deliverables
      (tenant_id,project_id,scope_revision,line_no,service_id,quantity,evidence,source)
    VALUES ('studio-b','b-demo',1,0,'render',1,'one image','brief');
