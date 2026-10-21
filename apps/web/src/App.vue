@@ -58,7 +58,7 @@ const blocked = computed(() => estimate.value?.state === 'blocked')
 const canEdit = computed(() => isDemo ? persona.value === 'operator' : authenticated.value)
 const hasProject = computed(() => view.value === 'workbench' && Boolean(snapshot.value))
 const localInvalid = computed(() => lines.value.some(l => {
-  const q = l.quantity.trim()
+  const q = String(l.quantity ?? '').trim()
   return !l.serviceId || (q !== '' && (!Number.isSafeInteger(Number(q)) || Number(q) < 1)) ||
     (l.source === 'brief' && (!l.evidence.trim() || !(snapshot.value?.project.brief ?? '').toLowerCase().includes(l.evidence.trim().toLowerCase())))
 }))
@@ -175,7 +175,7 @@ async function saveScope() {
   const targetId = currentId.value
   await run(async () => {
     const deliverables: Deliverable[] = lines.value.map(l => ({
-      serviceId: l.serviceId, quantity: l.quantity.trim() === '' ? null : Number(l.quantity),
+      serviceId: l.serviceId, quantity: String(l.quantity ?? '').trim() === '' ? null : Number(l.quantity),
       evidence: l.evidence.trim(), source: l.source
     }))
     const unknownList = unknowns.value.split('\n').map(s => s.trim()).filter(Boolean)
