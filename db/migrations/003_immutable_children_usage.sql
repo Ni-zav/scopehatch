@@ -7,6 +7,10 @@ ALTER TABLE scopehatch.catalog_versions
   ADD COLUMN IF NOT EXISTS service_count integer;
 ALTER TABLE scopehatch.scope_revisions
   ADD COLUMN IF NOT EXISTS line_count integer;
+ALTER TABLE scopehatch.catalog_versions
+  ADD COLUMN IF NOT EXISTS creation_txid bigint NOT NULL DEFAULT txid_current();
+ALTER TABLE scopehatch.scope_revisions
+  ADD COLUMN IF NOT EXISTS creation_txid bigint NOT NULL DEFAULT txid_current();
 ALTER TABLE scopehatch.catalog_versions DISABLE TRIGGER immutable_catalog_versions;
 ALTER TABLE scopehatch.scope_revisions DISABLE TRIGGER immutable_scope_revisions;
 UPDATE scopehatch.catalog_versions v SET service_count = (
@@ -42,16 +46,18 @@ AS $$
 DECLARE expected integer;
 DECLARE existing integer;
 DECLARE owner_id text;
+DECLARE parent_txid bigint;
 BEGIN
   PERFORM 1 FROM scopehatch.tenants WHERE id=NEW.tenant_id FOR UPDATE;
-  SELECT service_count, created_by INTO expected,owner_id
+  SELECT service_count, created_by, creation_txid INTO expected,owner_id,parent_txid
     FROM scopehatch.catalog_versions
    WHERE tenant_id=NEW.tenant_id AND version=NEW.catalog_version;
   SELECT count(*)::integer INTO existing FROM scopehatch.catalog_services
    WHERE tenant_id=NEW.tenant_id AND catalog_version=NEW.catalog_version;
   IF expected IS NULL OR existing >= expected OR
       NEW.service_id IS NULL OR NOT scopehatch.has_role(NEW.tenant_id, ARRAY['owner','operator'])
-      OR owner_id IS DISTINCT FROM scopehatch.actor_id() THEN
+      OR owner_id IS DISTINCT FROM scopehatch.actor_id()
+      OR parent_txid IS DISTINCT FROM txid_current() THEN
     RAISE EXCEPTION 'immutable catalog version cannot add lines'
       USING ERRCODE = '23514';
   END IF;
@@ -63,11 +69,12 @@ AS $$
 DECLARE expected integer;
 DECLARE existing integer;
 DECLARE owner_id text;
+DECLARE parent_txid bigint;
 BEGIN
   PERFORM 1 FROM scopehatch.tenants WHERE id=NEW.tenant_id FOR UPDATE;
   PERFORM 1 FROM scopehatch.projects
     WHERE tenant_id=NEW.tenant_id AND id=NEW.project_id FOR UPDATE;
-  SELECT line_count,author_id INTO expected,owner_id
+  SELECT line_count,author_id,creation_txid INTO expected,owner_id,parent_txid
     FROM scopehatch.scope_revisions
    WHERE tenant_id=NEW.tenant_id AND project_id=NEW.project_id
      AND revision=NEW.scope_revision;
@@ -75,7 +82,8 @@ BEGIN
    WHERE tenant_id=NEW.tenant_id AND project_id=NEW.project_id
      AND scope_revision=NEW.scope_revision;
   IF expected IS NULL OR existing >= expected OR NEW.line_no <> existing
-      OR owner_id IS DISTINCT FROM scopehatch.actor_id() THEN
+      OR owner_id IS DISTINCT FROM scopehatch.actor_id()
+      OR parent_txid IS DISTINCT FROM txid_current() THEN
     RAISE EXCEPTION 'immutable scope cannot add lines'
       USING ERRCODE = '23514';
   END IF;
