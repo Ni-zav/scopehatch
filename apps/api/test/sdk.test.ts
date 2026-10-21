@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
-import { ScopehatchClient, staticBearerToken } from '../../../packages/sdk/dist/src/index.js';
 import { buildServer } from '../src/server.ts';
 import { oidcVerifier } from '../src/auth.ts';
 import { createPgPorts, assertRestrictedPgPool } from '../src/postgres.ts';
@@ -11,6 +10,7 @@ import { createInferenceGateway } from '../src/inference.ts';
 
 const connectionString=process.env.TEST_PG_APP_URL;
 test('published SDK can run the authenticated two-actor workflow on durable Postgres', {skip:!connectionString},async t=>{
+  const {ScopehatchClient,staticBearerToken}=await import('../../../packages/sdk/dist/src/index.js');
   const pool=new Pool({connectionString,max:8});
   t.after(()=>pool.end());
   await assertRestrictedPgPool(pool);
