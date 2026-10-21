@@ -12,7 +12,8 @@ import {
   createScopeRevision as validateScope,
   estimateScope,
   submitReview as validateSubmit,
-  approveReview as validateApprove
+  approveReview as validateApprove,
+  exportProposal
 } from '../../src/domain.mjs';
 
 export class PersistenceError extends Error {
@@ -124,6 +125,64 @@ export function createPersistence(pool) {
         );
         if (!r.rowCount) reject('NOT_FOUND', 'project not found');
         return r.rows[0];
+      }
+      async function getProject(projectId) {
+        const project = await projectRow(projectId);
+        const intake = await latestIntake(projectId);
+        const scope = await q(
+          'SELECT revision,intake_revision FROM scopehatch.scope_revisions WHERE tenant_id=$1 AND project_id=$2 ORDER BY revision DESC LIMIT 1',
+          [tenant, projectId]
+        );
+        const estimate = await q(
+          'SELECT revision,scope_revision,catalog_version,state FROM scopehatch.estimate_revisions WHERE tenant_id=$1 AND project_id=$2 ORDER BY revision DESC LIMIT 1',
+          [tenant, projectId]
+        );
+        const catalog = await q('SELECT max(version) AS version FROM scopehatch.catalog_versions WHERE tenant_id=$1', [tenant]);
+        let status = 'draft';
+        const scopeRow = scope.rows[0], estimateRow = estimate.rows[0];
+        if (scopeRow && scopeRow.intake_revision === intake.revision && estimateRow &&
+            estimateRow.scope_revision === scopeRow.revision &&
+            estimateRow.catalog_version === catalog.rows[0].version) {
+          status = estimateRow.state;
+          if (status === 'ready') {
+            const review = await q(
+              'SELECT state FROM scopehatch.reviews WHERE tenant_id=$1 AND project_id=$2 AND estimate_revision=$3',
+              [tenant, projectId, estimateRow.revision]
+            );
+            status = review.rows[0]?.state ?? 'ready';
+          }
+        }
+        return { id: project.id, title: project.title, brief: intake.brief, status };
+      }
+      async function listReviews(projectId) {
+        await projectRow(projectId);
+        const r = await q(
+          'SELECT * FROM scopehatch.reviews WHERE tenant_id=$1 AND project_id=$2 ORDER BY created_at DESC,id DESC',
+          [tenant, projectId]
+        );
+        return r.rows.map(presentReview);
+      }
+      async function exportApproved(projectId) {
+        // A pending revision in another transaction cannot overtake this export.
+        await q('SELECT id FROM scopehatch.tenants WHERE id=$1 FOR UPDATE', [tenant]);
+        await projectRow(projectId, true);
+        const [scope, estimate, catalog, intake] = await Promise.all([
+          getScope(projectId), getEstimate(projectId), getCatalog(), latestIntake(projectId)
+        ]);
+        const bound = await q(
+          'SELECT intake_revision FROM scopehatch.scope_revisions WHERE tenant_id=$1 AND project_id=$2 AND revision=$3',
+          [tenant, projectId, scope.revision]
+        );
+        if (bound.rows[0].intake_revision !== intake.revision ||
+            scope.revision !== estimate.scopeRevision ||
+            estimate.catalogVersion !== catalog.version)
+          reject('STALE_REVISION', 'latest scope, intake and estimate not bound');
+        const reviewed = await q(
+          "SELECT * FROM scopehatch.reviews WHERE tenant_id=$1 AND project_id=$2 AND estimate_revision=$3 AND state='approved'",
+          [tenant, projectId, estimate.revision]
+        );
+        if (!reviewed.rowCount) reject('APPROVAL_REQUIRED', 'exact quote is not approved');
+        return exportProposal({ scope, estimate, review: presentReview(reviewed.rows[0]) });
       }
       async function latestIntake(projectId) {
         const r = await q(
@@ -392,9 +451,9 @@ export function createPersistence(pool) {
         return { replayed: false, result };
       }
       const repository = Object.freeze({
-        context: ctx, createProject, createIntake, createCatalog, getCatalog,
+        context: ctx, getProject, createProject, createIntake, createCatalog, getCatalog,
         listCatalogs, createScope, getScope, createEstimate, getEstimate,
-        submitReview, getReview, approveReview, listAudit, idempotent
+        submitReview, getReview, listReviews, approveReview, exportApproved, listAudit, idempotent
       });
       const result = await work(repository);
       await client.query('COMMIT');
