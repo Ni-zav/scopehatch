@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { PersistencePort, Principal, Project, Catalog, Scope } from './ports.ts';
 import { ApiError } from './core.ts';
-// @ts-expect-error Independent ESM extraction module's published types use .d.mts.
 import { extractBrief, createFixtureProvider, createOpenAICompatibleProvider } from '../../../packages/extraction/index.mjs';
+import type { ExtractInput, ExtractionProvider } from '../../../packages/extraction/index.mjs';
 // @ts-expect-error Independent ESM governance module.
 import { GovernanceEngine, executeGoverned } from '../../../packages/governance/src/index.mjs';
 // @ts-expect-error Independent ESM Postgres adapter.
@@ -20,7 +20,7 @@ type Config = { account: unknown; policy: {tenantId:string;currency:string;allow
 const sha=(text:string)=>createHash('sha256').update(text).digest('hex');
 const denied=(code:string,status:number,message:string):never=>{throw new ApiError(code,status,message);};
 
-function createFixture(brief: string, services:{id:string;label:string}[],requestId:string){
+function createFixture(brief: string, services:{id:string;label:string}[],requestId:string):ExtractionProvider{
   // Deterministic *non-model* fixture: no paid inference or token charge is
   // claimed. Outputs only an exact source quote, with an unknown quantity
   // whenever the source does not spell out a supported positive numeral.
@@ -30,16 +30,17 @@ function createFixture(brief: string, services:{id:string;label:string}[],reques
   const start=brief.indexOf(quote);
   const evidence=start>=0&&quote.trim()?{start,end:start+quote.length,quote}:null;
   const quantity=matched&&evidence?Number(matched[1]):null;
+  if (!catalog) throw new ApiError('NO_CATALOG',409,'No trusted catalog exists');
   const output={suggestedDeliverables:[{serviceId:catalog.id,quantity,evidence}],
     unknowns:quantity===null?['Quantity requires confirmation by an operator']:[]};
   const base=createFixtureProvider({model:'fixture-v1',cases:[{requestId,brief,output}]});
   return {
     name:'fixture',model:'fixture-v1',
-    async complete(input:unknown,context:unknown){
+    async complete(input:ExtractInput,context:{signal:AbortSignal}){
       const result=await base.complete(input,context);
       // Measured fixture accounting is explicitly known to be zero; not a
       // proxy for paid-model usage or missing token reports.
-      return {...result,usage:{status:'reported',inputTokens:0,outputTokens:0}};
+      return {...result,usage:{status:'reported' as const,inputTokens:0,outputTokens:0}};
     }
   };
 }
@@ -98,13 +99,13 @@ export function createInferenceGateway(pool: Pool, store: PersistencePort) {
         engine,request,traceId:sha(requestId).slice(0,32),maxAttempts:1,
         call:async ({providerId,model,signal}:{providerId:string;model:string;signal:AbortSignal})=>{
           const input={brief:initial.project.brief,serviceCatalog,requestId:sha(requestId).slice(0,32)};
-          let provider:ReturnType<typeof createFixture> | ReturnType<typeof createOpenAICompatibleProvider>;
+          let provider:ExtractionProvider;
           if(providerId==='fixture'&&model==='fixture-v1'){
             provider=createFixture(input.brief,input.serviceCatalog,input.requestId);
           }else {
             const endpoint=process.env.SCOPEHATCH_INFERENCE_BASE_URL;
             if(!endpoint||providerType!=='openai-compatible')
-              denied('NO_ELIGIBLE_PROVIDER',503,'Configured provider not connected');
+              throw new ApiError('NO_ELIGIBLE_PROVIDER',503,'Configured provider not connected');
             const host=new URL(endpoint).hostname;
             provider=createOpenAICompatibleProvider({
               endpoint: endpoint.endsWith('/chat/completions')?endpoint:
@@ -113,7 +114,7 @@ export function createInferenceGateway(pool: Pool, store: PersistencePort) {
               allowedHosts:[host],maxOutputTokens:2048
             });
           }
-          const value=await extractBrief(input,{tenantId:principal.tenantId,signal},provider,{timeoutMs:allowed[0].timeoutMs});
+          const value=await extractBrief(input,{tenantId:principal.tenantId,signal},provider,{timeoutMs:allowed[0]!.timeoutMs});
           return {value,usage:value.usage};
         }
       });
