@@ -1,0 +1,70 @@
+name: sprint 01 integration gates
+on:
+  push:
+    branches:
+      - integrate/s01-security-gated
+  pull_request:
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Resolve workspace packages
+        run: npm install --no-audit --no-fund --no-package-lock
+      - name: Type-check and build
+        run: npm run build && npm run typecheck
+      - name: Domain and package unit tests
+        run: npm run test:unit
+      - name: Deterministic adverse evaluations
+        run: npm run test:eval
+      - name: Docker static checks
+        run: |
+          python3 -m pip install --user --break-system-packages pyyaml
+          python3 -m unittest discover -s deploy/tests -v
+          node --test deploy/tests/entrypoint.test.mjs
+      - name: Browser smoke test (fixture mode only)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:browser
+
+  postgres-security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: scopehatch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d scopehatch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/scopehatch
+      TEST_PG_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/scopehatch
+      TEST_PG_APP_URL: postgresql://scopehatch_runtime:runtime_pw_for_github_ci_only_2026@127.0.0.1:5432/scopehatch
+      POSTGRES_USER: postgres
+      POSTGRES_RUNTIME_USER: scopehatch_runtime
+      SCOPEHATCH_RUNTIME_DB_PASSWORD_FILE: /tmp/scopehatch-runtime-ci-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Resolve packages
+        run: npm install --no-audit --no-fund --no-package-lock
+      - name: Provision restricted user and migrations
+        run: |
+          umask 077
+          printf '%s' 'runtime_pw_for_github_ci_only_2026' > "$SCOPEHATCH_RUNTIME_DB_PASSWORD_FILE"
+          npm run db:migrate --workspace @scopehatch/persistence
+      - name: Assert SQL isolation, write authorization and approval atomics
+        run: npm run test:db
+      - name: Postgres and Fastify integration checks
+        run: node --experimental-transform-types --test apps/api/test/postgres.test.ts
