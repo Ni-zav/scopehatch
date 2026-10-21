@@ -262,7 +262,7 @@ BEGIN
 END $$;
 CREATE OR REPLACE FUNCTION scopehatch.guard_project_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, scopehatch
-AS $
+AS $$
 BEGIN
   IF NEW.tenant_id IS DISTINCT FROM scopehatch.tenant_id()
      OR NEW.created_by IS DISTINCT FROM scopehatch.actor_id()
@@ -270,7 +270,7 @@ BEGIN
     RAISE EXCEPTION 'project creation permission denied' USING ERRCODE = '42501';
   END IF;
   RETURN NEW;
-END $;
+END $$;
 
 CREATE OR REPLACE FUNCTION scopehatch.guard_catalog_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, scopehatch
