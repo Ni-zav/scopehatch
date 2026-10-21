@@ -47,6 +47,10 @@ export function createPostgresGovernanceStorage(pool, principal) {
               row.createdAt,row.suggestionResult?JSON.stringify(row.suggestionResult):null]);
           if(result.rowCount!==1)throw Object.assign(new Error('Immutable reservation mismatch'),{code:'IDEMPOTENCY_CONFLICT'});
         },
+        async listRoutes() {
+          const r=await client.query('SELECT tenant_id AS "tenantId",provider_id AS "providerId",model,enabled,capabilities,context_window AS "contextWindow",residency,currency,input_per_million_minor::text AS "inputPerMillionMinor",output_per_million_minor::text AS "outputPerMillionMinor",priority,timeout_ms AS "timeoutMs" FROM scopehatch.inference_routes WHERE tenant_id=$1 AND enabled=true',[tenantId]);
+          return r.rows;
+        },
         async getEvent(eventId) {
           const r=await client.query('SELECT tenant_id AS "tenantId",id,reservation_id AS "reservationId",kind,fingerprint FROM scopehatch.inference_events WHERE tenant_id=$1 AND id=$2',[tenantId,eventId]);
           return r.rows[0]??null;
@@ -67,13 +71,8 @@ export function createPostgresGovernanceStorage(pool, principal) {
   async function getRoutes(){
     return withTenantTransaction(principal.tenantId,async tx=>{
       const account=await tx.getAccount();
-      const client=await pool.connect();
-      try{
-        await client.query('BEGIN READ ONLY');
-        await client.query("SELECT set_config('scopehatch.actor_id',$1,true),set_config('scopehatch.tenant_id',$2,true)",[principal.id,principal.tenantId]);
-        const r=await client.query('SELECT tenant_id AS "tenantId",provider_id AS "providerId",model,enabled,capabilities,context_window AS "contextWindow",residency,currency,input_per_million_minor::text AS "inputPerMillionMinor",output_per_million_minor::text AS "outputPerMillionMinor",priority,timeout_ms AS "timeoutMs" FROM scopehatch.inference_routes WHERE tenant_id=$1 AND enabled=true',[principal.tenantId]);
-        await client.query('COMMIT');
-        const candidates=r.rows.map(x=>({
+      const routes=await tx.listRoutes();
+        const candidates=routes.map(x=>({
           tenantId:x.tenantId,providerId:x.providerId,model:x.model,enabled:x.enabled,
           capabilities:x.capabilities,contextWindow:x.contextWindow,
           residency:x.residency,currency:x.currency,
@@ -84,8 +83,6 @@ export function createPostgresGovernanceStorage(pool, principal) {
           tenantId:principal.tenantId,currency:account?.currency??'',
           allowedModels:candidates.map(x=>({providerId:x.providerId,model:x.model}))
         }};
-      }catch(e){try{await client.query('ROLLBACK');}catch{}throw e;}
-      finally{client.release();}
     });
   }
   return {withTenantTransaction,getRoutes};
