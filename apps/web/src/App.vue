@@ -10,9 +10,11 @@ const isDemo = import.meta.env.VITE_SCOPEHATCH_DEMO === 'true'
 const fixture = isDemo ? new DemoApi() : null
 // Production has no implicit session, hardcoded bearer token, tenant header or role override.
 // The integrator supplies a verified OIDC token provider here after configuring auth.
+const selectedWorkspace = ref(sessionStorage.getItem('scopehatch.workspace') ?? '')
 const api: ScopehatchApi = fixture ?? createHttpApi({
   baseUrl: import.meta.env.VITE_SCOPEHATCH_API_BASE_URL || '',
-  getAccessToken
+  getAccessToken,
+  getWorkspaceId: () => selectedWorkspace.value
 })
 const authenticated = ref(isDemo || isSignedIn())
 const oidcReady = isDemo || oidcConfigured()
@@ -234,6 +236,14 @@ function eventDate(event: AuditEvent) {
 async function beginLogin() {
   try { await beginSignIn() } catch(cause) { showError(cause) }
 }
+async function changeWorkspace() {
+  if (isDemo || !authenticated.value) return
+  sessionStorage.setItem('scopehatch.workspace', selectedWorkspace.value.trim())
+  snapshot.value = null
+  currentId.value = ''
+  catalogs.value = []
+  await run(async () => { catalogs.value = await api.catalogs() })
+}
 async function disconnect() {
   signOut()
   authenticated.value = false
@@ -312,7 +322,10 @@ onMounted(async () => {
           <span v-else-if="oidcReady"> Sign in through your configured identity provider to access a workspace.</span>
           <span v-else> Configure VITE_OIDC_CLIENT_ID, VITE_OIDC_AUTHORIZATION_ENDPOINT and VITE_OIDC_TOKEN_ENDPOINT to enable live mode.</span>
           <button v-if="!authenticated && oidcReady" class="button secondary" type="button" @click="beginLogin">Sign in securely</button>
-          <button v-else-if="authenticated" class="button secondary" type="button" @click="disconnect">Sign out</button>
+          <label v-if="authenticated" for="workspace-select">Workspace ID</label>
+          <input v-if="authenticated" id="workspace-select" v-model="selectedWorkspace" autocomplete="off" placeholder="Authorized workspace ID" />
+          <button v-if="authenticated" class="button secondary" type="button" @click="changeWorkspace">Select workspace</button>
+          <button v-if="authenticated" class="button secondary" type="button" @click="disconnect">Sign out</button>
         </div>
         <div v-if="error" class="alert error-alert" role="alert">
           <span aria-hidden="true">!</span><div><strong>Couldn't complete that action</strong><p>{{ error }}</p></div>
@@ -429,10 +442,10 @@ onMounted(async () => {
                 <p v-else-if="blocked">Resolve every pricing blocker first, then save and recalculate.</p>
                 <p v-else>Once the estimate is ready, send this revision to a different reviewer.</p>
               </div>
-              <button v-if="canEdit" type="button" class="button primary full" :disabled="busy || draftDirty || !scope || estimate?.state !== 'ready' || (reviewCurrent && !!review)" @click="requestReview">
+              <button v-if="isDemo ? canEdit : authenticated" type="button" class="button primary full" :disabled="busy || draftDirty || !scope || estimate?.state !== 'ready' || (reviewCurrent && !!review)" @click="requestReview">
                 {{ pending ? 'Awaiting reviewer' : approved ? 'Already approved' : 'Request review →' }}
               </button>
-              <button v-else type="button" class="button primary full" :disabled="busy || !pending || draftDirty || estimate?.state !== 'ready'" @click="approveReview">
+              <button v-if="isDemo ? !canEdit : authenticated" type="button" class="button primary full" :disabled="busy || !pending || draftDirty || estimate?.state !== 'ready'" @click="approveReview">
                 {{ pending ? 'Approve exact revision →' : 'Nothing awaiting your approval' }}
               </button>
               <p class="review-foot">In API mode permissions are checked by the server, not by these button states.</p>
