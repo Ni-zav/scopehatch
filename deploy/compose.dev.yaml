@@ -7,7 +7,7 @@ x-dev-env: &dev-env
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
   POSTGRES_DB: ${POSTGRES_DB:-scopehatch}
-  POSTGRES_USER: ${POSTGRES_USER:-scopehatch}
+  POSTGRES_USER: ${POSTGRES_RUNTIME_USER:-scopehatch_runtime}
   OIDC_ISSUER: ${OIDC_ISSUER:?Set OIDC_ISSUER in .env}
   OIDC_AUDIENCE: ${OIDC_AUDIENCE:?Set OIDC_AUDIENCE in .env}
   OIDC_JWKS_URI: ${OIDC_JWKS_URI:?Set OIDC_JWKS_URI in .env}
@@ -34,8 +34,10 @@ services:
       dockerfile: deploy/Dockerfile.api
       target: development
     command: [migrate]
-    environment: *dev-env
-    secrets: [postgres_password]
+    environment:
+      <<: *dev-env
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-scopehatch_admin}
+    secrets: [postgres_password, postgres_runtime_password]
     networks: [backend]
     depends_on:
       postgres:
@@ -50,7 +52,7 @@ services:
       target: development
     command: [api-dev]
     environment: *dev-env
-    secrets: [postgres_password]
+    secrets: [postgres_runtime_password]
     networks: [backend, frontend, egress]
     depends_on:
       migrate:
@@ -73,7 +75,7 @@ services:
       target: development
     command: [worker-dev]
     environment: *dev-env
-    secrets: [postgres_password]
+    secrets: [postgres_runtime_password]
     networks: [backend, egress]
     depends_on:
       migrate:
