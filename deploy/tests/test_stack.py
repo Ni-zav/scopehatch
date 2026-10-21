@@ -42,7 +42,15 @@ class DeploymentContract(unittest.TestCase):
         self.assertEqual(self.external["secrets"]["provider_api_key"]["file"], "./secrets/provider_api_key")
         for mode in [self.prod, self.dev]:
             for role in ["api", "worker", "migrate"]:
-                self.assertIn("postgres_password", mode["services"][role]["secrets"])
+                mounted = mode["services"][role]["secrets"]
+                if role == "migrate":
+                    self.assertIn("postgres_password", mounted)
+                    self.assertIn("postgres_runtime_password", mounted)
+                else:
+                    self.assertIn("postgres_runtime_password", mounted)
+                    self.assertNotIn("postgres_password", mounted)
+            self.assertEqual(mode["services"]["api"]["environment"]["POSTGRES_USER"],
+                             "${POSTGRES_RUNTIME_USER:-scopehatch_runtime}")
 
     def test_migrations_gated_and_processes_nonroot(self):
         for mode in [self.prod, self.dev]:
