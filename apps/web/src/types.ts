@@ -1,0 +1,42 @@
+/** Sprint 01 JSON contract. Values that are not defined by the frozen contract stay optional. */
+export type Role = 'owner' | 'operator' | 'reviewer'
+export type Source = 'brief' | 'manual'
+export interface Service { id: string; label: string; unitPriceMinor: number }
+export interface Catalog { tenantId: string; currency: string; version: number; services: Service[] }
+export interface Deliverable { serviceId: string; quantity: number | null; evidence: string; source: Source }
+export interface Scope {
+  tenantId: string; projectId: string; revision: number; authorId: string
+  brief: string; deliverables: Deliverable[]; unknowns: string[]
+}
+export interface Blocker { code: string; detail: string }
+export interface EstimateLine extends Deliverable { quantity: number | null; unitPriceMinor: number | null; subtotalMinor: number | null }
+export interface Estimate {
+  tenantId: string; projectId: string; scopeRevision: number; catalogVersion: number
+  currency: string; lines: EstimateLine[]; blockers: Blocker[]
+  state: 'blocked' | 'ready'; totalMinor: number | null
+}
+export interface Review {
+  tenantId: string; projectId: string; scopeRevision: number; catalogVersion: number
+  state: 'pending' | 'approved'; submittedBy: string; approvedBy: string | null
+}
+export interface Project { id: string; title: string; brief: string; status: string }
+export interface Snapshot { project: Project; latestScope?: Scope; latestEstimate?: Estimate; review?: Review }
+export interface ProposalExport { projectId: string; revision: number; currency: string; totalMinor: number; markdown: string }
+/** Event payload is not yet frozen beyond its semantic fields. Unknown fields remain untrusted. */
+export interface AuditEvent {
+  id?: string; action?: string; actorId?: string; outcome?: string
+  timestamp?: string; createdAt?: string; scopeRevision?: number
+  objectRevision?: number; requestId?: string; [key: string]: unknown
+}
+export interface AuditPage { items: AuditEvent[]; nextCursor: string | null }
+export interface ScopehatchApi {
+  catalogs(): Promise<Catalog[]>
+  createProject(body: { title: string; brief: string }): Promise<Project>
+  project(id: string): Promise<Snapshot>
+  createScope(id: string, body: { deliverables: Deliverable[]; unknowns: string[] }): Promise<Scope>
+  estimate(id: string, body: { scopeRevision: number; catalogVersion: number }): Promise<Estimate>
+  submitReview(id: string, body: { scopeRevision: number; catalogVersion: number }): Promise<Review>
+  approve(id: string, body: { scopeRevision: number; catalogVersion: number }): Promise<Review>
+  export(id: string, revision: number): Promise<ProposalExport>
+  audit(id: string, cursor?: string, limit?: number): Promise<AuditPage>
+}
