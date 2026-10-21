@@ -75,7 +75,8 @@ export class ApplicationService {
       const latestScope = await tx.getLatestScope(id);
       const catalogs = await tx.listCatalogs();
       const latestEstimate = latestScope && catalogs[0] ? await tx.getEstimate(id, latestScope.revision, catalogs[0].version) : null;
-      const review = latestScope && catalogs[0] ? await tx.getReview(id, latestScope.revision, catalogs[0].version) : null;
+      const currentReview = latestScope && catalogs[0] ? await tx.getReview(id, latestScope.revision, catalogs[0].version) : null;
+      const review = currentReview ?? await tx.getLatestReview?.(id) ?? null;
       return { project, ...(latestScope && { latestScope }), ...(latestEstimate && { latestEstimate }), ...(review && { review }) };
     });
   }
