@@ -87,10 +87,8 @@ test('stale scope revisions invalidate previously approved export', async () => 
   await expectError(() => service.createEstimate(operator, id, 'e-stale', pair, 'req'), 'STALE_REVISION', 409);
 });
 
-test('missing evidence blocks estimates and review', async () => {
+test('brief evidence must occur verbatim in the source before scope is persisted', async () => {
   const service = setup(); const id = await create(service);
-  await service.createScope(operator, id, 's', { deliverables: [{ ...data.deliverables[0]!, evidence: '' }], unknowns: [] }, 'req');
-  const result = await service.createEstimate(operator, id, 'e', pair, 'req');
-  assert.equal((result.body as any).estimate.state, 'blocked');
-  await expectError(() => service.submit(operator, id, 'r', pair, 'req'), 'BLOCKED_ESTIMATE', 409);
+  await expectError(() => service.createScope(operator, id, 's1', { deliverables: [{ ...data.deliverables[0]!, evidence: '' }], unknowns: [] }, 'req'), 'EVIDENCE_NOT_IN_BRIEF', 422);
+  await expectError(() => service.createScope(operator, id, 's2', { deliverables: [{ ...data.deliverables[0]!, evidence: 'invented evidence' }], unknowns: [] }, 'req'), 'EVIDENCE_NOT_IN_BRIEF', 422);
 });
