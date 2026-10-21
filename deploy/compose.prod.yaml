@@ -10,7 +10,7 @@ x-app-env: &app-env
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
   POSTGRES_DB: ${POSTGRES_DB:-scopehatch}
-  POSTGRES_USER: ${POSTGRES_USER:-scopehatch}
+  POSTGRES_USER: ${POSTGRES_RUNTIME_USER:-scopehatch_runtime}
   OIDC_ISSUER: ${OIDC_ISSUER:?Set OIDC_ISSUER in .env}
   OIDC_AUDIENCE: ${OIDC_AUDIENCE:?Set OIDC_AUDIENCE in .env}
   OIDC_JWKS_URI: ${OIDC_JWKS_URI:?Set OIDC_JWKS_URI in .env}
@@ -39,8 +39,10 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-scopehatch}-api:local
     command: [migrate]
     restart: "no"
-    environment: *app-env
-    secrets: [postgres_password]
+    environment:
+      <<: *app-env
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-scopehatch_admin}
+    secrets: [postgres_password, postgres_runtime_password]
     networks: [backend]
     depends_on:
       postgres:
@@ -53,7 +55,7 @@ services:
     command: [api]
     restart: unless-stopped
     environment: *app-env
-    secrets: [postgres_password]
+    secrets: [postgres_runtime_password]
     networks: [backend, frontend, egress]
     depends_on:
       migrate:
@@ -73,7 +75,7 @@ services:
     command: [worker]
     restart: unless-stopped
     environment: *app-env
-    secrets: [postgres_password]
+    secrets: [postgres_runtime_password]
     networks: [backend, egress]
     depends_on:
       migrate:
