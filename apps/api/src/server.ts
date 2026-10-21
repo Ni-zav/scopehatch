@@ -36,7 +36,9 @@ const send = async (reply: FastifyReply, work: Promise<{ status: number; body: u
   return reply.code(result.status).send(result.body);
 };
 
-export function buildServer(deps: { store: PersistencePort; memberships: MembershipPort; verify: TokenVerifier }): FastifyInstance {
+export function buildServer(deps: { store: PersistencePort; memberships: MembershipPort; verify: TokenVerifier;
+  suggestions?: {suggest(principal:Principal,projectId:string,key:string,requestId:string,scopeRevision?:number):Promise<{status:number;body:unknown}>};
+}): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 1048576, trustProxy: false, ajv: { customOptions: { removeAdditional: false } } });
   const service = new ApplicationService(deps.store);
   app.setErrorHandler((error, request, reply) => {
@@ -74,7 +76,12 @@ export function buildServer(deps: { store: PersistencePort; memberships: Members
       return service.audit(actor(req), idOf(req), query.cursor, query.limit ? Number(query.limit) : 20);
     });
   app.post('/v1/projects/:id/suggestions', { schema: { params: paramsSchema, body: { type: 'object', additionalProperties: false, properties: { scopeRevision: integer } } } },
-    async req => { idempotency(req); return service.suggestions(actor(req), idOf(req)); });
+    async (req, reply) => {
+      const principal=actor(req), key=idempotency(req);
+      if(!deps.suggestions)return service.suggestions(principal,idOf(req));
+      const revision=(req.body as {scopeRevision?:number}|undefined)?.scopeRevision;
+      return send(reply,deps.suggestions.suggest(principal,idOf(req),key,req.id,revision));
+    });
   app.setNotFoundHandler((req, reply) => {
     void reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Resource not found', requestId: req.id } });
   });
