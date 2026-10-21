@@ -70,6 +70,7 @@ DECLARE expected integer;
 DECLARE existing integer;
 DECLARE owner_id text;
 DECLARE parent_txid bigint;
+DECLARE intake_brief text;
 BEGIN
   PERFORM 1 FROM scopehatch.tenants WHERE id=NEW.tenant_id FOR UPDATE;
   PERFORM 1 FROM scopehatch.projects
@@ -81,7 +82,20 @@ BEGIN
   SELECT count(*)::integer INTO existing FROM scopehatch.scope_deliverables
    WHERE tenant_id=NEW.tenant_id AND project_id=NEW.project_id
      AND scope_revision=NEW.scope_revision;
+  SELECT i.brief INTO intake_brief
+    FROM scopehatch.scope_revisions s
+    JOIN scopehatch.intakes i ON (i.tenant_id=s.tenant_id
+      AND i.project_id=s.project_id AND i.revision=s.intake_revision)
+    WHERE s.tenant_id=NEW.tenant_id AND s.project_id=NEW.project_id
+      AND s.revision=NEW.scope_revision;
+  IF NEW.source = 'brief' AND
+     (NEW.evidence IS NULL OR length(btrim(NEW.evidence))=0
+       OR strpos(intake_brief, NEW.evidence)=0) THEN
+    RAISE EXCEPTION 'brief evidence is not an exact source substring'
+      USING ERRCODE = '22023';
+  END IF;
   IF expected IS NULL OR existing >= expected OR NEW.line_no <> existing
+      OR NOT scopehatch.has_role(NEW.tenant_id, ARRAY['owner','operator'])
       OR owner_id IS DISTINCT FROM scopehatch.actor_id()
       OR parent_txid IS DISTINCT FROM txid_current() THEN
     RAISE EXCEPTION 'immutable scope cannot add lines'
