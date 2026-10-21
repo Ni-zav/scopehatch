@@ -92,6 +92,10 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.web
       target: runtime
+      args:
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-}
+        VITE_OIDC_AUTHORIZATION_ENDPOINT: ${VITE_OIDC_AUTHORIZATION_ENDPOINT:-}
+        VITE_OIDC_TOKEN_ENDPOINT: ${VITE_OIDC_TOKEN_ENDPOINT:-}
     restart: unless-stopped
     user: "101:101"
     read_only: true
