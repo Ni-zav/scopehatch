@@ -23,7 +23,7 @@ Requires Node.js >=22, no external dependencies. `build` syntax-checks ESM sourc
 
 ## Transaction-capable storage port (required for real usage accounting)
 
-`withTenantTransaction(tenantId, async tx => result)` MUST commit/rollback **atomically** and serialize account-budget changes across *all* processes. Inside the transaction, `tx` has these synchronous (or adapt to awaited equivalents in an integration shim) methods:
+`withTenantTransaction(tenantId, async tx => result)` MUST commit/rollback **atomically** and serialize account-budget changes across *all* processes. Inside the transaction, `tx` has these awaited methods (synchronous fake implementations are also supported):
 
 | Transaction method | Required result/behavior |
 | --- | --- |
@@ -37,16 +37,16 @@ Requires Node.js >=22, no external dependencies. `build` syntax-checks ESM sourc
 
 Implement in PostgreSQL with `BEGIN`/`COMMIT`, `SERIALIZABLE` isolation **or** a tenant budget row locked with `SELECT ... FOR UPDATE`, and transactional updates of reservation, account totals and idempotency events. Enforce tenant RLS and composite tenant foreign keys on budget, reservations, and events, with transaction-local verified tenant identity and `FORCE ROW LEVEL SECURITY` as appropriate. Set the tenant context on the **same dedicated transaction connection**, never reuse an untrusted session context. Require unique `(tenant_id,idempotency_key)` for reservations, unique `(tenant_id,reservation_id)`, unique `(tenant_id,event_id)` for accounting events. Database unique-constraint conflicts or serialization retries must be retried in bounded fashion **around the full transaction**, not by duplicating a provider call. Hash/dedupe of request intent is checked before new holds. Store authoritative model price snapshot in each reservation. Prevent lost updates, replayed settlement, cross-tenant event lookup and negative budget totals. The adapter must not expose a transaction callback whose effects are partly committed.
 
-**Important:** the port currently assumes synchronous transaction methods; PostgreSQL query APIs are async. The integrator can provide a preloaded synchronous transaction facade while row-locked, or introduce an awaited port in a dedicated integration PR and update callers/tests together. Do **not** implement a fake sync facade by issuing unawaited SQL. This is a specific integration change, not a claim of existing DB support.
+**Important:** The port awaits each transaction method and is directly compatible with asynchronous PostgreSQL query adapters. Implement all methods on a **single pinned transaction connection**. Never issue unawaited SQL, leak a transaction client outside its callback, or commit only part of a ledger transition.
 
 `FakeGovernanceStore` at `@scopehatch/governance/testing` deep-clones and serializes transactions **only within one JS process**. It is **not crash-safe, durable, multi-instance-safe or proof of PostgreSQL transactional correctness**.
 
 ## Remaining integrations
 
-1. Persistence worker: actual Postgres migrations, RLS, unique keys, durable budgets/reservations/events, row locks/serialization, transaction retries, version/tenant constraints and reconciliation scan for aged unknown holds. Align async port atomically as noted above.
+1. Persistence worker: actual Postgres migrations, RLS, unique keys, durable budgets/reservations/events, row locks/serialization, transaction retries, version/tenant constraints and reconciliation scan for aged unknown holds. Implement the awaited port described above.
 2. API/auth worker: verified OIDC membership context, tenant-specific policy/model registry, administrative budget policy and idempotency `requestDigest` generated from normalized request, 429/503 error mapping, no user-supplied provider identity as authority.
 3. Extraction worker: trusted OpenAI-compatible/Ollama adapter callback, content-safe credential resolution and abort/deadline handling, provider token metering or explicit unknown, provider billing/error classification and provider request IDs. The adapter MUST NOT mark ambiguous network failures `nonBillable`.
 4. Integrator: wire the suggestion endpoint through reserve -> markDispatched -> provider -> settle; add tenant-safe tracing and audit/outbox events, explicit pending/unknown spend UX and operator reconciliation from invoices, replay semantics and recovery for stranded `dispatched` records.
 5. Integration testing: real PostgreSQL two-connection contention, process crash after dispatch, ambiguous timeout, duplicate request from independent API instances, cross-tenant RLS, authoritative invoice/billing reconciliation and rollback. None is verified by these in-memory tests.
 
-**Proposed contract change:** Formalize this package's exact ledger port shape, async DB transaction contract and error mapping in a future dedicated shared-contract integration PR. No shared contract is edited here.
+**Proposed contract change:** Document this awaited ledger port and API error mapping in a future dedicated shared-contract integration PR. No shared contract is edited here.
