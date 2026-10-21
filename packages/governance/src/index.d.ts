@@ -7,14 +7,15 @@ export type Reservation = {id:string;tenantId:string;status:'reserved'|'dispatch
 export type Account = {currency:string;limitMinor:MoneyMinor;heldMinor:MoneyMinor;spentMinor:MoneyMinor};
 export type LedgerRow = Reservation & {idempotencyKey:string;intent:string;price:ProviderPrice;createdAt:number};
 export type LedgerEvent = {tenantId:string;id:string;reservationId:string;kind:string;fingerprint:string};
+export type MaybePromise<T> = T | Promise<T>;
 export interface LedgerTransaction {
-  getAccount(): Account|null;
-  putAccount(account:Account):void;
-  getReservationByKey(key:string):LedgerRow|null;
-  getReservationById(id:string):LedgerRow|null;
-  putReservation(row:LedgerRow):void;
-  getEvent(eventId:string):LedgerEvent|null;
-  putEvent(event:LedgerEvent):void;
+  getAccount(): MaybePromise<Account|null>;
+  putAccount(account:Account):MaybePromise<void>;
+  getReservationByKey(key:string):MaybePromise<LedgerRow|null>;
+  getReservationById(id:string):MaybePromise<LedgerRow|null>;
+  putReservation(row:LedgerRow):MaybePromise<void>;
+  getEvent(eventId:string):MaybePromise<LedgerEvent|null>;
+  putEvent(event:LedgerEvent):MaybePromise<void>;
 }
 export interface GovernanceStorage {withTenantTransaction<T>(tenantId:string, callback:(tx:LedgerTransaction)=>Promise<T>):Promise<T>}
 export class GovernanceError extends Error {readonly code:string;readonly status:number;constructor(code:string,message:string,status?:number)}
