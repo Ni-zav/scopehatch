@@ -1,9 +1,10 @@
-name: sprint 01 integration gates
+name: Sprint 02 integration release gates
 on:
   push:
     branches:
       - main
       - integrate/s01-security-gated
+      - integrate/s02-first-usable-release
   pull_request:
 jobs:
   contracts:
@@ -20,7 +21,13 @@ jobs:
       - name: Domain and package unit tests
         run: npm run test:unit
       - name: Deterministic adverse evaluations
-        run: npm run test:eval
+        run: |
+          npm run test:eval
+          node tests/evaluations/benchmark.mjs --mode fixture --suite extended --strict
+      - name: Bootstrap and restore safety unit tests
+        run: |
+          node --test tools/onboarding/test/bootstrap.test.mjs
+          node --test deploy/tests/recovery.test.mjs
       - name: Docker static checks
         run: |
           python3 -m pip install --user --break-system-packages pyyaml
@@ -49,6 +56,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/scopehatch
       TEST_PG_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/scopehatch
+      TEST_PG_DATABASE: scopehatch
       TEST_PG_APP_URL: postgresql://scopehatch_runtime:runtime_pw_for_github_ci_only_2026@127.0.0.1:5432/scopehatch
       POSTGRES_USER: postgres
       POSTGRES_RUNTIME_USER: scopehatch_runtime
@@ -67,6 +75,8 @@ jobs:
           npm run db:migrate --workspace @scopehatch/persistence
       - name: Assert SQL isolation, write authorization and approval atomics
         run: npm run test:db
+      - name: Trusted first-owner provisioning against disposable Postgres
+        run: node --test tools/onboarding/test/postgres.integration.test.mjs
       - name: Postgres and Fastify integration checks
         run: |
           node --experimental-transform-types --test apps/api/test/postgres.test.ts
@@ -113,6 +123,8 @@ jobs:
         run: |
           docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml ps
           docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml logs --no-color --tail=80 migrate api postgres
+      - name: Isolated full PostgreSQL backup and restore rehearsal
+        run: RUN_SCOPEHATCH_DOCKER_RECOVERY=1 node --test deploy/tests/recovery.test.mjs
       - name: Stop fixture environment
         if: always()
         run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml down --volumes --remove-orphans
