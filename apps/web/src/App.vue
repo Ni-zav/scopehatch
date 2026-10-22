@@ -447,23 +447,18 @@ onMounted(async () => {
       <div class="brand"><div class="brand-mark" aria-hidden="true">S<span>·</span></div><div><strong>Scopehatch</strong><small>Operator workbench</small></div></div>
       <div class="sidebar-section">
         <p class="eyebrow">WORKSPACE</p>
-        <button class="nav-link" :class="{ selected: hasProject }" type="button" :disabled="busy" @click="view = 'workbench'">
-          <span aria-hidden="true">▤</span> Current project
-        </button>
-        <button class="nav-link" :class="{ selected: view === 'new' }" type="button" :disabled="busy" @click="view = 'new'; clearFeedback()">
-          <span aria-hidden="true">＋</span> New brief
-        </button>
+        <button class="nav-link" :class="{ selected: view === 'index' }" type="button" :disabled="busy || !authenticated" @click="navigate('index')"><span aria-hidden="true">▦</span> Projects</button>
+        <button class="nav-link" :class="{ selected: hasProject }" type="button" :disabled="busy || !snapshot" @click="navigate('workbench')"><span aria-hidden="true">▤</span> Current project</button>
+        <button class="nav-link" :class="{ selected: view === 'new' }" type="button" :disabled="busy || !authenticated" @click="navigate('new')"><span aria-hidden="true">＋</span> New brief</button>
+        <button class="nav-link" :class="{ selected: view === 'catalog' }" type="button" :disabled="busy || !authenticated" @click="navigate('catalog')"><span aria-hidden="true">◫</span> Rate catalog</button>
       </div>
       <div class="sidebar-section compact">
-        <p class="eyebrow">OPEN A PROJECT</p>
-        <form @submit.prevent="loadProject(projectIdInput.trim())">
-          <label class="sr-only" for="project-id">Project ID</label>
-          <div class="project-jump">
-            <input id="project-id" v-model="projectIdInput" autocomplete="off" placeholder="Project ID" required />
-            <button type="submit" aria-label="Open project by ID" :disabled="loading || busy">→</button>
-          </div>
-        </form>
-        <p class="side-help">Project lists are not part of Sprint 01's API. Open a known ID.</p>
+        <p class="eyebrow">RECENT PROJECTS</p>
+        <p v-if="!projectPage?.items.length" class="side-help">No projects loaded in this workspace.</p>
+        <button v-for="item in projectPage?.items.slice(0,4) ?? []" :key="item.id" type="button"
+          class="nav-link recent-project" :disabled="busy || loading" @click="openExisting(item.id)">
+          <span class="recent-title">{{ item.title }}</span><small>{{ item.status }}</small>
+        </button>
       </div>
       <div class="sidebar-bottom">
         <div class="mode-flag" :class="{ 'live-flag': !isDemo }"><span class="flag-dot"></span>{{ isDemo ? 'DEMO FIXTURE · LOCAL ONLY' : 'API MODE · AUTH REQUIRED' }}</div>
@@ -473,6 +468,7 @@ onMounted(async () => {
           <select id="persona" :value="persona" :disabled="busy" @change="changePersona(($event.target as HTMLSelectElement).value as FixturePersona)">
             <option value="operator">Morgan · Operator (fixture)</option>
             <option value="reviewer">Alex · Reviewer (fixture)</option>
+            <option value="owner">Taylor · Owner (fixture)</option>
           </select>
           <p class="side-help">Simulated roles, not signed-in users. The API never receives these identities.</p>
         </div>
@@ -482,7 +478,7 @@ onMounted(async () => {
 
     <div class="main-column">
       <header class="topbar">
-        <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><strong>{{ view === 'new' ? 'New intake' : snapshot?.project.title ?? 'Project' }}</strong></div>
+        <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><strong>{{ view === 'new' ? 'New intake' : view === 'index' ? 'Projects' : view === 'catalog' ? 'Catalog versions' : snapshot?.project.title ?? 'Project' }}</strong></div>
         <span class="top-meta">Brief → Scope → Review → Proposal</span>
       </header>
 
@@ -507,7 +503,54 @@ onMounted(async () => {
         </div>
         <div v-if="notice" class="alert notice-alert" role="status"><span aria-hidden="true">✓</span><p>{{ notice }}</p><button type="button" aria-label="Dismiss message" @click="notice = ''">×</button></div>
 
-        <section v-if="view === 'new'" class="intake-page" aria-labelledby="intake-heading">
+        <section v-if="view === 'index'" class="index-page" aria-labelledby="index-heading">
+          <div class="index-header">
+            <div><p class="overline">WORKSPACE / PROJECTS</p><h1 id="index-heading">Your studio's work.</h1><p class="lede">Reopen original briefs and see each project's current status.</p></div>
+            <button class="button primary" type="button" :disabled="!authenticated" @click="navigate('new')">New client brief →</button>
+          </div>
+          <p v-if="listBusy" role="status" class="blank-state">Loading projects…</p>
+          <div v-else-if="projectPage?.items.length" class="project-cards">
+            <button v-for="item in projectPage.items" :key="item.id" type="button" class="project-card" @click="openExisting(item.id)">
+              <span class="project-card-top"><strong>{{ item.title }}</strong><span class="index-status" :class="item.status">{{ item.status === 'draft' ? 'Needs estimate' : item.status === 'blocked' ? 'Blocked' : item.status === 'ready' ? 'Ready' : item.status === 'pending' ? 'Pending review' : 'Approved' }}</span></span>
+              <span class="project-card-meta">Created {{ new Date(item.createdAt).toLocaleDateString() }} · Open project →</span>
+            </button>
+          </div>
+          <div v-else class="empty-workspace"><h2>No projects in this workspace yet.</h2><p>Create one from an original brief. No IDs to copy or remember.</p><button class="button primary" type="button" :disabled="!authenticated" @click="navigate('new')">Create first project</button></div>
+          <nav class="pagination" aria-label="Project pages">
+            <button class="button secondary" type="button" :disabled="listBusy || pageNumber === 0" @click="previousPage">← Previous page</button><span>Page {{ pageNumber + 1 }}</span>
+            <button class="button secondary" type="button" :disabled="listBusy || !projectPage?.nextCursor" @click="nextPage">Next page →</button>
+          </nav>
+        </section>
+        <section v-else-if="view === 'catalog'" class="catalog-page" aria-labelledby="catalog-heading">
+          <p class="overline">STUDIO PRICING / OWNER CONTROLLED</p><h1 id="catalog-heading">Versioned rate catalog.</h1>
+          <p class="lede">Publishing replaces the entire service list as a new immutable version. Prices are integer minor units, never model-generated.</p>
+          <div class="surface-card">
+            <div class="panel-heading"><div><h2>Catalog v{{ catalog?.version ?? 0 }}</h2><p class="muted">{{ catalogs.length }} recorded version{{ catalogs.length === 1 ? '' : 's' }}</p></div>
+              <button class="button secondary" type="button" :disabled="catalogSaving" @click="hydrateCatalog">Discard edits and reload</button>
+            </div>
+            <p v-if="!catalog" class="inline-alert">No catalog exists yet. A verified owner must publish version one before a quote can be priced.</p>
+            <p v-if="ownerDenied" role="status" class="inline-alert">The API denied catalog publishing (403). Verified owner membership is required.</p>
+            <p v-if="isDemo && !canManageCatalog" class="inline-alert">Switch to Taylor · Owner (fixture) to test catalog publishing.</p>
+            <p v-else-if="!isDemo && canManageCatalog" class="muted">The server checks owner membership on publish; this editor is not proof of authorization.</p>
+            <form v-if="canManageCatalog" class="catalog-form" @submit.prevent="saveCatalog">
+              <div class="field"><label for="catalog-currency">ISO currency</label><input id="catalog-currency" v-model="catalogCurrency" maxlength="3" required @input="markCatalogDirty" /></div>
+              <div v-for="(rate,index) in rateRows" :key="rate.key" class="rate-editor">
+                <strong>Service {{ index+1 }}</strong>
+                <div class="field"><label :for="'rate-id-'+rate.key">Service ID</label><input :id="'rate-id-'+rate.key" v-model="rate.id" required @input="markCatalogDirty" /></div>
+                <div class="field"><label :for="'rate-label-'+rate.key">Service label</label><input :id="'rate-label-'+rate.key" v-model="rate.label" required @input="markCatalogDirty" /></div>
+                <div class="field"><label :for="'rate-price-'+rate.key">Unit price (minor units)</label><input :id="'rate-price-'+rate.key" v-model="rate.price" inputmode="numeric" pattern="[0-9]+" required @input="markCatalogDirty" /></div>
+                <button class="text-button danger" type="button" @click="rateRows = rateRows.filter(x => x.key !== rate.key); markCatalogDirty()">Remove</button>
+              </div>
+              <button class="button secondary" type="button" :disabled="rateRows.length >= 200" @click="addRate">＋ Add catalog service</button>
+              <p v-if="catalogDirty" class="dirty-note">Unsaved pricing changes. Previous versions cannot be edited.</p>
+              <button class="button primary" type="submit" :disabled="catalogSaving || !catalogDirty">{{ catalogSaving ? 'Publishing…' : 'Publish new catalog version →' }}</button>
+            </form>
+            <details v-if="catalogs.length" class="catalog-history"><summary>View published version history</summary>
+              <div v-for="version in catalogs" :key="version.version" class="catalog-history-row"><strong>Version {{ version.version }} · {{ version.currency }}</strong><p>{{ version.services.length }} services · read-only</p></div>
+            </details>
+          </div>
+        </section>
+        <section v-else-if="view === 'new'" class="intake-page" aria-labelledby="intake-heading">
           <p class="overline">01 / INTAKE</p>
           <h1 id="intake-heading">Begin with the client's words.</h1>
           <p class="lede">The original brief is preserved as evidence. You decide what the actual work includes.</p>
@@ -523,8 +566,8 @@ onMounted(async () => {
         <div v-else-if="loading" class="loading-view" role="status"><div class="spinner"></div><p>Loading the project and its revision history…</p></div>
         <section v-else-if="!snapshot" class="empty-workspace">
           <p class="overline">START HERE</p><h1>Every clear proposal starts with a messy brief.</h1>
-          <p>Create a project to record the request before estimating any work. Or open an existing project by ID.</p>
-          <button type="button" class="button primary" @click="view = 'new'">New client brief →</button>
+          <p>Create a project to record the request before estimating any work. Or browse the workspace project list.</p>
+          <button type="button" class="button primary" @click="navigate('new')">New client brief →</button>
         </section>
         <template v-else>
           <div class="workspace-intro">
