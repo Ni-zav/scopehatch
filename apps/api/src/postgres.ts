@@ -1,7 +1,9 @@
 import type { Pool } from 'pg';
+import { ApiError } from './core.ts';
+import { normalizeScope,normalizeProposal,renderProposalMarkdown } from './proposal.ts';
 import type {
   PersistencePort, MembershipPort, UnitOfWork, Principal,
-  Project, Scope, Estimate, Review, AuditEvent, Catalog
+  Project, Scope, Estimate, Review, AuditEvent, Catalog, ProjectPage, ServiceRate, ProposalMetadata
 } from './ports.ts';
 // The shared JavaScript persistence module retains its own runtime contract.
 // @ts-expect-error JS ESM module is independently shipped without a .d.mts
@@ -13,13 +15,17 @@ type DbRepo = {
   listCatalogs(): Promise<unknown[]>;
   getCatalog(v?:number):Promise<unknown>;
   getScope(id:string,revision?:number):Promise<Scope>;
-  createScope(data:{projectId:string;deliverables:Scope['deliverables'];unknowns:Scope['unknowns']}):Promise<Scope>;
+  createScope(data:{projectId:string;deliverables:Scope['deliverables'];unknowns:Scope['unknowns'];proposal?:ProposalMetadata}):Promise<Scope>;
+  /** Sprint 02 DB worker must expose atomic baseVersion CAS, not Sprint 01 createCatalog(). */
+  createCatalogVersion?(input:{baseVersion:number;currency:string;services:readonly ServiceRate[]}):Promise<Catalog>;
+  /** Sprint 02 DB worker must provide tenant-bound SQL keyset pagination. */
+  listProjects?(input:{limit:number;cursor?:string}):Promise<ProjectPage>;
   getEstimate(id:string,revision?:number):Promise<Estimate & {revision:number}>;
   createEstimate(data:{projectId:string;scopeRevision:number;catalogVersion:number}):Promise<Estimate & {revision:number}>;
   listReviews(id:string):Promise<(Review & {id:string;estimateRevision:number})[]>;
   submitReview(data:{projectId:string;estimateRevision:number}):Promise<Review>;
   approveReview(data:{projectId:string;reviewId:string}):Promise<Review>;
-  exportApproved(id:string):Promise<{projectId:string;revision:number;currency:string;totalMinor:number;markdown:string}>;
+  exportApproved(id:string):Promise<{projectId:string;revision:number;currency:string;totalMinor:number;markdown:string;proposal?:ProposalMetadata}>;
   listAudit(data:{projectId:string;before?:string;limit:number}):Promise<{items:Array<{
     id:string;tenantId:string;projectId:string;actorId:string;requestId:string;action:string;objectRevision:number|null;
     outcome:string;createdAt:Date
@@ -46,13 +52,29 @@ function adapt(repo:DbRepo, principal:Principal):UnitOfWork {
       await repo.createProject({id:project.id,title:project.title,brief:project.brief});
     },
     listCatalogs: async () => await repo.listCatalogs() as Catalog[],
+    async createCatalogVersion(input) {
+      if(!repo.createCatalogVersion)throw new ApiError('DEPENDENCY_UNAVAILABLE',503,'Catalog persistence extension unavailable');
+      return repo.createCatalogVersion(input);
+    },
+    async listProjects(input) {
+      if(!repo.listProjects)throw new ApiError('DEPENDENCY_UNAVAILABLE',503,'Project listing persistence extension unavailable');
+      return repo.listProjects(input);
+    },
     async getCatalog(version) {
       return await optional(()=>repo.getCatalog(version)) as Awaited<ReturnType<UnitOfWork['getCatalog']>>;
     },
-    getLatestScope: (id) => optional(()=>repo.getScope(id)),
+    async getLatestScope(id){const scope=await optional(()=>repo.getScope(id));return scope?normalizeScope(scope):null;},
     async insertScope(scope) {
-      const saved=await repo.createScope({projectId:scope.projectId,deliverables:scope.deliverables,unknowns:scope.unknowns});
+      const saved=await repo.createScope({projectId:scope.projectId,deliverables:scope.deliverables,unknowns:scope.unknowns,proposal:scope.proposal});
       if(saved.revision!==scope.revision || saved.authorId!==principal.id) stale();
+      const actual=normalizeScope(saved);
+      const intended=normalizeScope(scope);
+      // Existing Sprint 01 persistence silently discards metadata. Roll back rather than accept
+      // a 201 with lost commercial terms. The DB Sprint 02 worker supplies the forward migration.
+      if(JSON.stringify(actual.proposal)!==JSON.stringify(intended.proposal)||
+         JSON.stringify(actual.deliverables.map(d=>d.clientDescription))!==
+         JSON.stringify(intended.deliverables.map(d=>d.clientDescription)))
+        throw new ApiError('DEPENDENCY_UNAVAILABLE',503,'Revision metadata persistence unavailable');
     },
     async getEstimate(id,scopeRevision,catalogVersion) {
       const candidate=await optional(()=>repo.getEstimate(id));
@@ -147,7 +169,11 @@ export function createPgPorts(pool:Pool):{store:PersistencePort;memberships:Memb
     exportApproved:(principal,projectId,revision)=>persistence.withPrincipal(principal,async (repo:DbRepo)=>{
       const result=await repo.exportApproved(projectId);
       if(result.revision!==revision) stale();
-      return result;
+      const scope=normalizeScope(await repo.getScope(projectId,revision));
+      // Approval/export locks are acquired by the durable persistence operation first.
+      // Do not use latest text from another scope revision.
+      return {...result,proposal:normalizeProposal(scope.proposal),
+        markdown:result.proposal ? result.markdown : result.markdown+renderProposalMarkdown(scope)};
     })
   };
   const memberships:MembershipPort={
