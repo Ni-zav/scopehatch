@@ -46,10 +46,10 @@ function summarizeMeasurements(rows) {
   const metered=completed.filter(r=>r.usage.status==='reported');
   const costed=completed.filter(r=>r.cost?.source==='provider_reported');
   const times=rows.map(r=>r.latencyMs).filter(n=>Number.isSafeInteger(n)&&n>=0).sort((a,b)=>a-b);
-  const complete=completed.length>0&&metered.length===completed.length;
+  const complete=rows.length>0&&metered.length===rows.length;
   const totalTokens=key=>complete?metered.reduce((s,r)=>s+BigInt(r.usage[key]),0n).toString():null;
   const currencies=new Set(costed.map(r=>r.cost.currency));
-  const costComplete=completed.length>0&&costed.length===completed.length&&currencies.size===1;
+  const costComplete=rows.length>0&&costed.length===rows.length&&currencies.size===1;
   return {attempts:rows.length,completed:completed.length,failures:rows.length-completed.length,
     latencyMs:{count:times.length,mean:times.length?Math.round(times.reduce((a,b)=>a+b,0)/times.length):null,
       p95:times.length?times[Math.ceil(times.length*.95)-1]:null},
