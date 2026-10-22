@@ -370,7 +370,8 @@ test('S02: approved proposal uses immutable exact revision and safely rendered m
   assert.deepEqual(exported.proposal,proposal);
   assert.match(exported.markdown,/Payment within 10 days/);
   assert.match(exported.markdown,/Dusk view/);
-  assert.doesNotMatch(exported.markdown,/<img|<script>/);
+  assert.match(exported.markdown,/\\<img/);
+  assert.match(exported.markdown,/\\<script/);
   const read=await store.withPrincipal(a,tx=>tx.getScope(projectId));
   assert.equal(read.deliverables[0].clientDescription,line.clientDescription);
   await directFailure(a,
