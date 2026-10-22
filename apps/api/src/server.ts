@@ -32,7 +32,7 @@ const proposalBody={
 const projectsQuery={
   type:'object',additionalProperties:false,properties:{
     limit:{type:'string',pattern:'^[1-9][0-9]{0,2}$',maxLength:3},
-    cursor:{type:'string',pattern:'^[A-Za-z0-9._~-]{1,512}$',maxLength:512}
+    cursor:{type:'string',pattern:'^[A-Za-z0-9._~-]{1,512}
   }
 } as const;
 const scopeBody = {
