@@ -93,7 +93,7 @@ export class ApplicationService {
   }
   listProjects(principal:Principal, cursor:string|undefined, limit:number) {
     if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail('INVALID_INPUT',422,'Invalid project page size');
-    if(cursor!==undefined&&!/^[A-Za-z0-9_-]{1,512}$/.test(cursor))fail('INVALID_CURSOR',422,'Invalid project cursor');
+    if(cursor!==undefined&&(cursor.length>512||!/^p1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(cursor)))fail('INVALID_CURSOR',422,'Invalid project cursor');
     return this.read(principal,async tx=>{
       if(!tx.listProjects)fail('DEPENDENCY_UNAVAILABLE',503,'Project index adapter unavailable');
       return tx.listProjects!({limit,cursor});
