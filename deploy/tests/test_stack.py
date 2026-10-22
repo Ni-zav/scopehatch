@@ -1,6 +1,8 @@
 """Static deployment invariant tests. Requires PyYAML, no Docker daemon."""
 from pathlib import Path
 import unittest
+import shutil
+import subprocess
 import yaml
 
 DEPLOY = Path(__file__).resolve().parents[1]
@@ -115,6 +117,16 @@ class DeploymentContract(unittest.TestCase):
         self.assertIn("--no-owner", runbook)
         self.assertNotIn("--no-owner --no-acl", runbook)
         self.assertIn("recovery-rehearsal.md", runbook)
+
+
+    def test_node_recovery_contracts_when_node_is_installed(self):
+        if not shutil.which("node"):
+            self.skipTest("Node not available; run node --test deploy/tests/recovery.test.mjs separately")
+        result = subprocess.run(
+            ["node", "--test", "deploy/tests/recovery.test.mjs"],
+            cwd=DEPLOY.parent, capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 if __name__ == "__main__":
     unittest.main()
