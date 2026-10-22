@@ -6,7 +6,7 @@ export function normalizeProposal(input?: ProposalMetadata):ProposalMetadata {
   return { overview: input?.overview ?? '', assumptions:[...(input?.assumptions ?? [])],
     exclusions:[...(input?.exclusions ?? [])], commercialTerms:[...(input?.commercialTerms ?? [])] };
 }
-export function normalizeScope<T extends Scope>(scope:T):T {
+export function normalizeScope(scope:Scope):Scope {
   return { ...scope, proposal:normalizeProposal(scope.proposal),
     deliverables:scope.deliverables.map(d=>({...d,clientDescription:d.clientDescription ?? ''})) };
 }
