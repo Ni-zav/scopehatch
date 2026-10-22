@@ -120,7 +120,12 @@ function hydrateDraft() {
     evidence: item.evidence, source: item.source, clientDescription: item.clientDescription ?? ''
   }))
   unknowns.value = scope.value?.unknowns.join('\n') ?? ''
-  metadata.value = structuredClone(scope.value?.proposal ?? {overview:'',assumptions:[],exclusions:[],commercialTerms:[]})
+  metadata.value = {
+    overview:scope.value?.proposal?.overview ?? '',
+    assumptions:[...(scope.value?.proposal?.assumptions ?? [])],
+    exclusions:[...(scope.value?.proposal?.exclusions ?? [])],
+    commercialTerms:[...(scope.value?.proposal?.commercialTerms ?? [])]
+  }
   assumptionsText.value = metadata.value.assumptions.join('\n')
   exclusionsText.value = metadata.value.exclusions.join('\n')
   commercialTermsText.value = metadata.value.commercialTerms.join('\n')
