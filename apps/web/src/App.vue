@@ -635,12 +635,29 @@ onMounted(async () => {
                 <div class="field"><label :for="'evidence-' + line.key">{{ line.source === 'brief' ? 'Exact brief excerpt' : 'Reason for manual entry' }}</label>
                   <input :id="'evidence-' + line.key" v-model="line.evidence" :disabled="busy || !canEdit" :placeholder="line.source === 'brief' ? 'Copy the client’s exact words' : 'Explain the assumption or correction'" @focus="activeEvidence = line.source === 'brief' ? line.evidence : ''" @input="edit(); activeEvidence = line.source === 'brief' ? line.evidence : ''" />
                 </div>
+                <div class="field"><label :for="'description-' + line.key">Client-facing description</label>
+                  <textarea :id="'description-' + line.key" v-model="line.clientDescription" maxlength="2000" rows="2" :disabled="busy || !canEdit" placeholder="Describe this deliverable for the client" @input="edit" />
+                </div>
               </div>
               <button type="button" class="button secondary add-line" :disabled="busy || !canEdit || !catalog" @click="addLine">＋ Add deliverable</button>
               <div class="unknown-section"><div class="subheading"><h3>Open questions & assumptions</h3><span class="mini-tag">Each line blocks pricing</span></div>
                 <label for="unknowns">One unresolved requirement per line. Remove only after it has been clarified.</label>
                 <textarea id="unknowns" v-model="unknowns" rows="3" :disabled="busy || !canEdit" placeholder="e.g. Number of exterior angles must be confirmed" @input="edit" />
               </div>
+              <fieldset class="proposal-fields" :disabled="busy || !canEdit">
+                <legend>Client-facing proposal content</legend>
+                <p class="muted">Human-authored content belongs to this immutable scope revision. Text-only changes require fresh estimate and approval.</p>
+                <div class="field"><label for="proposal-overview">Overview</label><textarea id="proposal-overview" v-model="metadata.overview" maxlength="4000" rows="3" @input="edit" /></div>
+                <div class="field"><label for="proposal-assumptions">Assumptions (one per line)</label><textarea id="proposal-assumptions" v-model="assumptionsText" rows="3" @input="edit" /></div>
+                <div class="field"><label for="proposal-exclusions">Exclusions (one per line)</label><textarea id="proposal-exclusions" v-model="exclusionsText" rows="3" @input="edit" /></div>
+                <div class="field"><label for="proposal-terms">Commercial terms (one per line)</label><textarea id="proposal-terms" v-model="commercialTermsText" rows="3" @input="edit" /></div>
+                <details class="proposed-preview"><summary>Preview editable proposal text</summary>
+                  <p>{{ metadata.overview || 'No overview entered.' }}</p>
+                  <h4>Assumptions</h4><p v-for="(item,index) in parseLines(assumptionsText)" :key="'a'+index">{{ item }}</p>
+                  <h4>Exclusions</h4><p v-for="(item,index) in parseLines(exclusionsText)" :key="'e'+index">{{ item }}</p>
+                  <h4>Commercial terms</h4><p v-for="(item,index) in parseLines(commercialTermsText)" :key="'t'+index">{{ item }}</p>
+                </details>
+              </fieldset>
               <div class="scope-actions">
                 <p v-if="draftDirty" class="dirty-note">● Unsaved changes — any approval would not apply to them.</p>
                 <button class="button primary" type="button" :disabled="busy || !canEdit || !catalog || localInvalid || (!draftDirty && Boolean(scope))" @click="saveScope">

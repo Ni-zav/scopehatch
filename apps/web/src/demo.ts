@@ -57,7 +57,7 @@ export class DemoApi implements ScopehatchApi {
   }
   selectPersona(persona: FixturePersona) { this.persona = persona }
   private requireOperator() {
-    if (this.persona !== 'operator') fail(403, 'FORBIDDEN', 'The fixture reviewer cannot edit scope or submit reviews.')
+    if (this.persona === 'reviewer') fail(403, 'FORBIDDEN', 'The fixture reviewer cannot edit scope or submit reviews.')
   }
   private requireOwner() {
     if (this.persona !== 'owner') fail(403, 'FORBIDDEN', 'Only the fixture owner can publish rates.')
