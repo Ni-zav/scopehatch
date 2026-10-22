@@ -1,4 +1,4 @@
-# @scopehatch/sdk (Sprint 01 adapter)
+# @scopehatch/sdk (Sprint 01 + Sprint 02 API adapter)
 
 Typed, framework-agnostic TypeScript client for the **proposed** Scopehatch HTTP v1 contract. It makes the same HTTP requests as the operator workbench; it does **not** implement a backend, authentication server, local RBAC, approval engine, or autonomous agent.
 
@@ -33,9 +33,23 @@ const project = await sdk.createProject(
 );
 const scope = await sdk.createScope(project.id, {
   deliverables: [{ serviceId: 'exterior', quantity: 2,
-    evidence: 'Two exterior views', source: 'brief' }], unknowns: [],
+    evidence: 'Two exterior views', source: 'brief',
+    clientDescription: 'Two sunset exterior views' }],
+  unknowns: [],
+  proposal: {
+    overview: 'Exterior render deliverables', assumptions: ['Client supplies model'],
+    exclusions: ['Animation'], commercialTerms: ['Timeline confirmed in writing'],
+  },
 }, { idempotencyKey: 'scope-workflow-42' });
 
+// The catalog is a complete owner-controlled replacement, not an incremental rate edit.
+const newCatalog = await sdk.createCatalog({
+  baseVersion: 0, currency: 'IDR',
+  services: [{ id: 'exterior', label: 'Exterior render', unitPriceMinor: 2500000 }],
+}, { idempotencyKey: 'catalog-onboarding-42' });
+const projectsPage = await sdk.listProjects({ limit: 20 });
+const nextPage = projectsPage.nextCursor
+  ? await sdk.listProjects({ limit: 20, cursor: projectsPage.nextCursor }) : null;
 const catalogs = await sdk.listCatalogs();
 const binding = { scopeRevision: scope.revision, catalogVersion: catalogs[0]!.version };
 const estimate = await sdk.createEstimate(project.id, binding,
@@ -56,7 +70,7 @@ const secondPage = firstPage.nextCursor
 
 Also exposed: `getProject`, `approveReview`, `suggestScope`, `staticBearerToken` (for explicitly managed tokens), typed errors (`ScopehatchHttpError`, `ScopehatchTimeoutError`, `ScopehatchAbortError`, `ScopehatchNetworkError`, `ScopehatchProtocolError`, `ScopehatchConfigurationError`, `ScopehatchAuthenticationError`), request-level `AbortSignal` and `timeoutMs`.
 
-The SDK intentionally does not accept a `tenantId`, `actorId`, `role`, `approvedBy`, or `unitPriceMinor` field on mutation inputs. It serializes allowlisted properties, so runtime extra properties supplied by JavaScript callers are discarded. Server-side validation and authorization remain mandatory.
+The SDK intentionally does not accept an authoritative `tenantId`, `actorId`, `role`, `approvedBy`, or `version` on mutation inputs; only catalog services accept owner-authored `unitPriceMinor` on `createCatalog`. It serializes allowlisted properties, so runtime extra properties supplied by JavaScript callers are discarded. Server-side validation and authorization remain mandatory.
 
 ## Retries and idempotency
 
@@ -66,7 +80,7 @@ All `POST` requests require an explicit `idempotencyKey`; the SDK will not manuf
 
 ## Integration contract and limitations
 
-- Target: `contracts/sprint-01-interface.md` on main as of Sprint 01. Fields not frozen there (such as audit event structure, suggestion payload and error-code vocabulary) remain `Record<string, unknown>` / `unknown` rather than guessed schemas.
+- Target: `contracts/sprint-01-interface.md` plus the frozen additive `contracts/sprint-02-interface.md` on main. Fields not frozen there (such as audit event structure, suggestion payload and error-code vocabulary) remain `Record<string, unknown>` / `unknown` rather than guessed schemas.
 - The domain kernel currently uses **string evidence citations**, so `Deliverable.evidence` is a string. Structured offset evidence from extraction must be normalized by a future integration adapter **or changed only in a coordinated contract PR**.
 - TypeScript types and simple envelope checks do **not** replace runtime server validation. Dynamic JSON fields require downstream checks before sensitive use.
 - Tenant access, OIDC verification, revision freshness, catalog prices, reviewer independence, idempotency persistence and export authorization can only be proven with a live, wired backend and integration tests. The standalone SDK cannot enforce them.
@@ -74,3 +88,14 @@ All `POST` requests require an explicit `idempotencyKey`; the SDK will not manuf
 - No support yet for token refresh challenge negotiation, generated OpenAPI clients, Node <18, alternative HTTP media types, streaming, package publication or MCP adapters.
 
 This directory is solely owned by the SDK workstream. Do not modify sibling packages, root manifests or the frozen shared contract in this PR.
+
+
+## Sprint 02 compatibility and authority
+
+- `createCatalog({ baseVersion, currency, services }, { idempotencyKey })` creates **one complete immutable version**; `baseVersion: 0` is only valid for the first catalog. Existing catalog services are not patched. Only the server can verify owner membership, serialize concurrent version changes, reject stale/replayed writes, or select the resulting version.
+- `listProjects({ limit?, cursor?, signal?, timeoutMs? })` returns `{items,nextCursor}` ordered by the server; `limit` is 1–100 and the opaque cursor belongs to the verified workspace. No client tenant filtering, role selector or local project-status derivation is provided. Do not persist/reuse a cursor across workspaces.
+- `createScope` can send optional `clientDescription` per line and a `proposal` with `overview`, `assumptions`, `exclusions`, `commercialTerms`. Sending revised text creates a **new scope revision**, requiring re-estimation, independent review and fresh approval on the server. Legacy calls without these keys produce their original bodies.
+- New scope reads and approved export responses contain normalized proposal metadata on Sprint 02 servers. The TypeScript fields stay optional so SDK clients can also consume older Sprint 01 deployments; treat absent proposal as `{overview:'',assumptions:[],exclusions:[],commercialTerms:[]}` in presentation logic.
+- New method responses receive focused shape checks for project pages and catalog creation. This is not a general JSON-schema validator; the authenticated API is authoritative for permissions, money, tenant scope, revision freshness, cursor binding and replay.
+- A Sprint 01 server may return 404 for the new endpoints or 422 for new scope metadata; upgrade the API and persistence together. Typed `ScopehatchHttpError` exposes the actual status, safe error code and request ID. Malformed success bodies raise `ScopehatchProtocolError`, transport/timeouts/cancellation retain their existing typed failures.
+- `examples/mock-workflow.mjs` and SDK tests use only deterministic local mock HTTP. They do not prove live OIDC, PostgreSQL isolation or server authorization. No privileged onboarding/tenant-creation endpoint is included.
