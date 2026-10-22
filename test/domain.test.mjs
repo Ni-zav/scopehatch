@@ -147,7 +147,7 @@ test('renders HTML-escaped, Markdown-inert human text, with honest unsigned stat
   assert.doesNotMatch(output.markdown, /!\[remote\]/);
   assert.match(output.markdown, /&lt;img/);
   assert.match(output.markdown, /\\!\\\[remote\\\]/);
-  assert.doesNotMatch(output.markdown, /signed quotation/i);
+  assert.match(output.markdown, /not a signed quotation/i);
 });
 
 test('uses ISO 4217 fractional digits with BigInt, never floating point currency math', async () => {
