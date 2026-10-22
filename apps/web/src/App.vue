@@ -488,7 +488,7 @@ onMounted(async () => {
         </button>
       </div>
       <div class="sidebar-section compact project-id-fallback">
-        <details>
+        <details open>
           <summary>Open by project ID</summary>
           <form class="project-jump-form" @submit.prevent="openExisting(projectIdInput.trim())">
             <label for="project-id">Project ID</label>
