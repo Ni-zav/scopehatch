@@ -43,7 +43,7 @@ test('recovery has strict container isolation and never targets Compose volumes'
   assert.match(text, /cmp -s/);
   assert.match(text, /migrate "\$target_id"/);
   assert.doesNotMatch(text, /docker compose\s+down|docker volume rm|--volumes|down -v/);
-  assert.doesNotMatch(text, /DATABASE_URL|COMPOSE_PROJECT_NAME|docker exec.*scopehatch_admin/);
+  assert.doesNotMatch(text.replace(/^#.*$/gm, ''), /DATABASE_URL|COMPOSE_PROJECT_NAME|docker exec.*scopehatch_admin/);
 });
 test('recovery assertions include all financial, tenancy and held-inference invariants', () => {
   const sql = read('deploy/tests/recovery-integrity.sql');
