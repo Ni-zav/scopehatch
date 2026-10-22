@@ -5,6 +5,7 @@ import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {runEvaluation} from './runner.mjs';
+import {PROMPT_VERSION,SCHEMA_VERSION} from '../../packages/extraction/prompt.mjs';
 import {createEvaluationAdapter,configurationFromEnv,validateProviderConfig} from '../../examples/evaluation/openai-compatible.mjs';
 
 const HERE=dirname(fileURLToPath(import.meta.url));
@@ -84,7 +85,8 @@ export async function runBenchmark({fixtures,corpusHash,suite='extended',mode='f
       'false-commitment','out-of-catalog','quantity-trap'].includes(t));
     const groundingPassed=row.status==='completed'&&row.schemaValid&&row.spanTotal===row.spanValid&&
       row.correctFields===row.fields&&row.attributionCorrect===row.attributionTotal&&
-      row.extraMappings===0&&!row.falseCommitment&&audit.checked===audit.supported;
+      row.extraMappings===0&&!row.falseCommitment&&row.unknownCorrect===row.unknownTotal&&
+      row.abstentionCorrect===row.abstentionTotal&&audit.checked===audit.supported;
     return {id:row.id,discipline:['archviz','design','software'].includes(fixture.discipline)?fixture.discipline:'baseline',
       tags,quantityEvidence:audit,groundingPassed};
   });
@@ -106,7 +108,8 @@ export async function runBenchmark({fixtures,corpusHash,suite='extended',mode='f
   const grounded=cases.reduce((sum,c)=>sum+c.quantityEvidence.supported,0);
   const config=mode==='live'?validateProviderConfig(modelConfig):null;
   return {...report,benchmark:{version:2,suite,syntheticOnly:true,corpusSha256:corpusHash,
-    model:config?{provider:config.provider,requestedModel:config.model,temperature:config.temperature,
+    model:config?{provider:config.provider,requestedModel:config.model,promptVersion:PROMPT_VERSION,
+      extractionSchemaVersion:SCHEMA_VERSION,temperature:config.temperature,
       seed:config.seed,maxOutputTokens:config.maxOutputTokens,jsonMode:config.jsonMode}:null,
     extendedMetrics:{quantityEvidenceSupportRate:rate(grounded,qty),
       adversarialCaseGroundingPassRate:rate(threats.filter(c=>c.groundingPassed).length,threats.length),
@@ -138,7 +141,7 @@ async function cli() {
   const adapter=config?createEvaluationAdapter({config}):null;
   const report=await runBenchmark({fixtures,corpusHash,suite,mode:o.mode,
     authorized:o.mode==='live',adapter,modelConfig:config,
-    timeoutMs:o.timeoutMs,maxAttempts:o.maxAttempts});
+    timeoutMs:o.timeoutMs,maxAttempts:o.maxAttempts,seed:config?.seed??0});
   const json=JSON.stringify(report,null,2)+'\n';
   if(o.output){
     await mkdir(dirname(resolve(o.output)),{recursive:true});
