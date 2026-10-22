@@ -87,5 +87,34 @@ class DeploymentContract(unittest.TestCase):
             self.assertNotIn("postgres_password", self.external["services"][role]["secrets"])
             self.assertIn("postgres_runtime_password", self.external["services"][role]["secrets"])
 
+
+    def test_recovery_scripts_are_isolated_and_wired_to_real_integrity_checks(self):
+        script = (DEPLOY / "scripts/rehearse-recovery.sh").read_text()
+        upgrade = (DEPLOY / "scripts/verify-upgrade.sh").read_text()
+        sql = (DEPLOY / "tests/recovery-integrity.sql").read_text()
+        self.assertIn("--network none", script)
+        self.assertIn("--rm --network none", script)
+        self.assertIn("pg_dump", script)
+        self.assertIn("pg_restore --list", script)
+        self.assertIn("--exit-on-error", script)
+        self.assertIn("fingerprints", script)
+        self.assertIn('migrate "$target_id"', script)
+        self.assertIn("trap cleanup EXIT", script)
+        self.assertNotIn("docker volume rm", script)
+        self.assertNotIn("docker compose down", script)
+        for relation in ("scope_revisions", "reviews", "inference_reservations",
+                         "idempotency_records", "audit_events", "catalog_versions"):
+            self.assertIn(relation, sql)
+        self.assertIn("SET LOCAL ROLE scopehatch_rehearsal_runtime", sql)
+        self.assertIn("preflight.sh prod", upgrade)
+        self.assertIn("exited:0", upgrade)
+        self.assertNotIn("docker compose down", upgrade)
+
+    def test_backup_runbook_preserves_acl_grants(self):
+        runbook = (DEPLOY.parent / "docs/operations/backup-and-restore.md").read_text()
+        self.assertIn("--no-owner", runbook)
+        self.assertNotIn("--no-owner --no-acl", runbook)
+        self.assertIn("recovery-rehearsal.md", runbook)
+
 if __name__ == "__main__":
     unittest.main()
