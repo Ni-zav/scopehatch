@@ -17,7 +17,7 @@ type DbRepo = {
   getScope(id:string,revision?:number):Promise<Scope>;
   createScope(data:{projectId:string;deliverables:Scope['deliverables'];unknowns:Scope['unknowns'];proposal?:ProposalMetadata}):Promise<Scope>;
   /** Sprint 02 DB worker must expose atomic baseVersion CAS, not Sprint 01 createCatalog(). */
-  createCatalogVersion?(input:{baseVersion:number;currency:string;services:readonly ServiceRate[]}):Promise<Catalog>;
+  createCatalog(input:{baseVersion:number;currency:string;services:readonly ServiceRate[]}):Promise<Catalog>;
   /** Sprint 02 DB worker must provide tenant-bound SQL keyset pagination. */
   listProjects?(input:{limit:number;cursor?:string}):Promise<ProjectPage>;
   getEstimate(id:string,revision?:number):Promise<Estimate & {revision:number}>;
@@ -53,8 +53,9 @@ function adapt(repo:DbRepo, principal:Principal):UnitOfWork {
     },
     listCatalogs: async () => await repo.listCatalogs() as Catalog[],
     async createCatalogVersion(input) {
-      if(!repo.createCatalogVersion)throw new ApiError('DEPENDENCY_UNAVAILABLE',503,'Catalog persistence extension unavailable');
-      return repo.createCatalogVersion(input);
+      // Sprint 02 DB module names this atomic CAS operation createCatalog.
+      // Alias only at the HTTP UnitOfWork contract; do not split its transaction.
+      return repo.createCatalog(input);
     },
     async listProjects(input) {
       if(!repo.listProjects)throw new ApiError('DEPENDENCY_UNAVAILABLE',503,'Project listing persistence extension unavailable');
