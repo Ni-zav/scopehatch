@@ -68,14 +68,14 @@ migrate() {
 }
 role_setup() {
   docker exec "$1" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d scopehatch_dr \
-    -c 'DO $$ BEGIN
-          IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = ''scopehatch_app'') THEN
+    -c "DO \$\$ BEGIN
+          IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='scopehatch_app') THEN
             CREATE ROLE scopehatch_app NOLOGIN NOBYPASSRLS;
           END IF;
-          IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = ''scopehatch_rehearsal_runtime'') THEN
+          IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='scopehatch_rehearsal_runtime') THEN
             CREATE ROLE scopehatch_rehearsal_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS;
           END IF;
-        END $$;' >/dev/null
+        END \$\$;" >/dev/null
   docker exec "$1" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d scopehatch_dr \
     -c 'GRANT scopehatch_app TO scopehatch_rehearsal_runtime' >/dev/null
 }
