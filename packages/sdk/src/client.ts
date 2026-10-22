@@ -106,7 +106,7 @@ function serializeProposal(value: ProposalMetadata): ProposalMetadata {
       x.trim().length < 1 || x.trim().length > 2000)) {
       throw new ScopehatchConfigurationError('Invalid proposal.' + field);
     }
-    return v.map(x => x.trim());
+    return v.slice(); // preserve human-authored text; trim only for validation
   };
   return {
     overview: value.overview,
@@ -148,6 +148,7 @@ function catalogResponse(value: unknown): Catalog {
   if (!asRecord(catalog) || !nonempty(catalog.tenantId) ||
     !currencyCode(catalog.currency) || !Number.isSafeInteger(catalog.version) ||
     (catalog.version as number) < 1 || !Array.isArray(catalog.services) ||
+    catalog.services.length < 1 || catalog.services.length > 200 ||
     catalog.services.some(service => !asRecord(service) || !nonempty(service.id) ||
       !nonempty(service.label) || !Number.isSafeInteger(service.unitPriceMinor) ||
       (service.unitPriceMinor as number) < 0)) {

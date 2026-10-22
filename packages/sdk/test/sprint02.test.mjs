@@ -86,7 +86,7 @@ test('scope metadata is forwarded in a new immutable revision without privileged
     deliverables: [{ serviceId: 'exterior', quantity: 2, evidence: 'brief excerpt',
       source: 'brief', clientDescription: '<b>Sunset</b>' }],
     unknowns: [],
-    proposal: { overview: 'Project & text', assumptions: ['client supplies CAD'],
+    proposal: { overview: 'Project & text', assumptions: [' client supplies CAD '],
       exclusions: ['No animation'], commercialTerms: ['Written terms only'] },
   });
   assert.equal((await client.createScope('p', {
