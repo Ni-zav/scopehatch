@@ -234,6 +234,10 @@ function headingItems(items) {
 function humanLabel(id) {
   return id.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
+// Trusted principal IDs containing only inert characters need no Markdown escapes.
+function reviewerLabel(id) {
+  return /^[A-Za-z0-9_-]+$/.test(id) ? id : markdownText(id);
+}
 /**
  * Creates an UNSIGNED draft from an exact approved snapshot.
  * Current-version arguments must be supplied from the DB's guarded read for
@@ -305,7 +309,7 @@ export function exportProposal({
     '**Total: ' + formatMoneyMinor(estimate.totalMinor, estimate.currency) + '**',
     'Authoritative minor-unit total: ' + estimate.totalMinor + ' ' + estimate.currency + '.',
     'Catalog version: ' + estimate.catalogVersion + '; scope revision: ' + scope.revision + '.',
-    'Approved by: ' + markdownText(review.approvedBy) + ' (independent human review of this exact revision).',
+    'Approved by: ' + reviewerLabel(review.approvedBy) + ' (independent human review of this exact revision).',
     '_Review authorizes export of this draft only; it is not a signature._'
   ].join('\n\n') + '\n';
   return Object.freeze({
