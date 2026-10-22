@@ -252,7 +252,8 @@ async function saveScope() {
   await run(async () => {
     const deliverables: Deliverable[] = lines.value.map(l => ({
       serviceId: l.serviceId, quantity: String(l.quantity ?? '').trim() === '' ? null : Number(l.quantity),
-      evidence: l.evidence.trim(), source: l.source, clientDescription: l.clientDescription
+      evidence: l.evidence.trim(), source: l.source,
+      ...(l.clientDescription.trim() ? { clientDescription: l.clientDescription } : {})
     }))
     const unknownList = unknowns.value.split('\n').map(s => s.trim()).filter(Boolean)
     const proposalMetadata: ProposalMetadata = {
@@ -262,7 +263,12 @@ async function saveScope() {
       commercialTerms: parseLines(commercialTermsText.value)
     }
     validateProposal(proposalMetadata, deliverables)
-    const next = await api.createScope(targetId, { deliverables, unknowns: unknownList, proposal:proposalMetadata })
+    // Sprint 02 metadata is additive. Omit absent optional fields so the
+    // unchanged Sprint 01 workflow remains operable until the API PR lands.
+    const hasProposal = Boolean(proposalMetadata.overview || proposalMetadata.assumptions.length ||
+      proposalMetadata.exclusions.length || proposalMetadata.commercialTerms.length)
+    const next = await api.createScope(targetId, { deliverables, unknowns: unknownList,
+      ...(hasProposal ? {proposal:proposalMetadata} : {}) })
     await api.estimate(targetId, { scopeRevision: next.revision, catalogVersion: catalog.value!.version })
     await reload('Revision ' + next.revision + ' saved and recalculated. Previous approvals do not transfer.')
   })
@@ -480,6 +486,18 @@ onMounted(async () => {
           class="nav-link recent-project" :disabled="busy || loading" @click="openExisting(item.id)">
           <span class="recent-title">{{ item.title }}</span><small>{{ item.status }}</small>
         </button>
+      </div>
+      <div class="sidebar-section compact project-id-fallback">
+        <details>
+          <summary>Open by project ID</summary>
+          <form class="project-jump-form" @submit.prevent="openExisting(projectIdInput.trim())">
+            <label for="project-id">Project ID</label>
+            <div class="project-jump">
+              <input id="project-id" v-model="projectIdInput" autocomplete="off" placeholder="Project ID" required />
+              <button type="submit" aria-label="Open project by ID" :disabled="loading || busy">→</button>
+            </div>
+          </form>
+        </details>
       </div>
       <div class="sidebar-bottom">
         <div class="mode-flag" :class="{ 'live-flag': !isDemo }"><span class="flag-dot"></span>{{ isDemo ? 'DEMO FIXTURE · LOCAL ONLY' : 'API MODE · AUTH REQUIRED' }}</div>
