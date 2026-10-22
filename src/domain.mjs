@@ -305,7 +305,7 @@ export function exportProposal({
     '**Total: ' + formatMoneyMinor(estimate.totalMinor, estimate.currency) + '**',
     'Authoritative minor-unit total: ' + estimate.totalMinor + ' ' + estimate.currency + '.',
     'Catalog version: ' + estimate.catalogVersion + '; scope revision: ' + scope.revision + '.',
-    'Human review recorded for this revision by: ' + markdownText(review.approvedBy) + '.',
+    'Approved by: ' + markdownText(review.approvedBy) + ' (independent human review of this exact revision).',
     '_Review authorizes export of this draft only; it is not a signature._'
   ].join('\n\n') + '\n';
   return Object.freeze({
