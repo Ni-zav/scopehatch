@@ -64,8 +64,12 @@ function nonempty(value: unknown): value is string {
 }
 function currencyCode(value: unknown): value is string {
   if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value)) return false;
-  try { new Intl.NumberFormat('en', { style: 'currency', currency: value }); return true; }
-  catch { return false; }
+  try {
+    // Intl.NumberFormat accepts invented three-letter codes; supportedValuesOf does not.
+    if (!Intl.supportedValuesOf('currency').includes(value)) return false;
+    new Intl.NumberFormat('en', { style: 'currency', currency: value });
+    return true;
+  } catch { return false; }
 }
 function optionalCursor(value: unknown, label: string): string {
   if (typeof value !== 'string' || !CURSOR.test(value)) {
