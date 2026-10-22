@@ -91,6 +91,7 @@ function normalizeDescriptions(deliverables, proposal) {
 }
 function md(value) {
   return String(value).replace(/[\\\x60*_{}\[\]()#+.!|<>~>]/g, ch => '\\' + ch)
+    .replace(/(^|\n)([ \t]*)-(?=\s)/g, (_, start, spaces) => start + spaces + '\\-')
     .replace(/\r?\n/g, '  \n');
 }
 function proposalMarkdown(scope, estimate, review) {
