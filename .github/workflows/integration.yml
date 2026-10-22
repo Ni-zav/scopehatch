@@ -83,6 +83,7 @@ jobs:
           node --experimental-transform-types --test apps/api/test/inference.test.ts
           npm run build --workspace @scopehatch/sdk
           node --experimental-transform-types --test apps/api/test/sdk.test.ts
+          node --experimental-transform-types --test apps/api/test/sprint02-postgres.test.ts
       - name: Browser OIDC PKCE two-actor live PostgreSQL workflow
         run: |
           npx playwright install --with-deps chromium
