@@ -141,3 +141,23 @@ test('legacy model adapter also refuses unapproved calls',()=>{
   assert.equal(result.status,0);
   assert.match(result.stdout,/PROVIDER_NOT_AUTHORIZED/);
 });
+
+test('a failed provider attempt prevents aggregate usage/cost from masquerading as complete',async()=>{
+  const {fixtures,hash}=await loadBenchmarkFixtures({suite:'baseline'});
+  const one=fixtures.extraction.find(c=>c.id==='known-interior');
+  const two=fixtures.extraction.find(c=>c.id==='injected-approval-price');
+  let calls=0;
+  const adapter=createEvaluationAdapter({config,fetchImpl:async()=>{
+    calls++;
+    if(calls===2) return new Response('{}',{status:429});
+    return response(mock(one.brief,'interior-render',12,'12 interior images'),
+      {prompt_tokens:100,completion_tokens:15,cost:'0.003',currency:'USD'});
+  }});
+  const report=await runBenchmark({fixtures:{...fixtures,extraction:[one,two]},corpusHash:hash,
+    mode:'live',authorized:true,adapter,modelConfig:config});
+  assert.equal(report.metrics.adapterFailureCount,1);
+  assert.equal(report.benchmark.summary.attempts,2);
+  assert.equal(report.benchmark.summary.usage.status,'unknown');
+  assert.equal(report.benchmark.summary.usage.inputTokens,null);
+  assert.equal(report.benchmark.summary.cost.status,'unknown');
+});
