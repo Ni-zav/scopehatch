@@ -1,48 +1,45 @@
-# Scopehatch evaluation harness — sprint 01
+# Scopehatch evaluations — Sprint 02
 
-This is an independently executable Node.js 22+ harness with **no external npm dependencies**. It modifies only `tests/evaluations/**` and `examples/evaluation/**`. No real client data or credentials are included.
+The original `runner.mjs` and `cases.json` remain supported with unchanged Sprint 01 metric definitions. The new `benchmark.mjs` is optional: **fixture mode is the default** and does not use a model, network or credentials. Node.js 22+ is required; no new npm dependencies.
 
-## Run from the repository root
+## Offline checks (safe for ordinary CI)
 
 ```bash
 node --test tests/evaluations/*.test.mjs
-node tests/evaluations/runner.mjs --strict --output /tmp/scopehatch-eval.json
-EVAL_MODEL_URL=http://127.0.0.1:11434/v1/chat/completions EVAL_MODEL=llama3.2 \
-  node tests/evaluations/runner.mjs --mode live \
-  --adapter ./examples/evaluation/openai-compatible.mjs \
-  --max-attempts 1 --timeout-ms 30000 --seed 7 \
-  --output /tmp/scopehatch-live-eval.json
+node tests/evaluations/runner.mjs --strict
+node tests/evaluations/benchmark.mjs --mode fixture --suite extended --strict
+node tests/evaluations/benchmark.mjs --mode fixture --suite baseline --strict
 ```
 
-For a remote HTTPS OpenAI-compatible endpoint, set `EVAL_MODEL_URL`, `EVAL_MODEL`, and `EVAL_API_KEY` through environment variables. Never put secrets in source, fixtures, or shell history. Provider-specific JSON-mode/seed support can differ. `--cases ./other-cases.json` selects another fixture manifest; stdout is machine-readable JSON. `--output` is optional; when used it creates a permission-restricted local file. With `--strict`, gate failures exit 1 and configuration errors exit 2. Non-strict mode produces a report without asserting the score is good.
+`baseline` uses exactly the original nine extraction cases. `extended` additionally includes 14 human-authored synthetic archviz, design and software cases with missing quantities, unsupported service mappings, prompt-injection, invented evidence and approval/price instructions. The original workflow and failure-injection checks still run from the local domain kernel. Fixture-perfect results **do not establish real model quality**.
 
-To evaluate a real deployed API later, implement a separate ESM `runWorkflowCase({caseId,scenario,expected})` and run with `--workflow-adapter ./your-api-adapter.mjs`. Its return shape is `{allowed:boolean, code:string|null, priceCorrect:boolean|null}`. It **must** perform actual authenticated requests under separate operator, reviewer and other-tenant principals, compare approval-bound exported revision and catalog-derived prices, and check audit activity; HTTP 2xx alone does not imply task success. Currently, without this adapter, the workflow tests call `src/domain.mjs` directly and verify only its in-process rules.
+## Operator-authorized model benchmark
 
-## Interpretation
+Only run this from your own machine with an installed Ollama instance or an explicitly approved OpenAI-compatible provider. Provide environment variables through your shell's private environment/secret manager, never in committed files, shell history, screenshots or PR comments.
 
-`cases.json` has nine synthetic extraction briefs, nine pure-domain state-machine scenarios, and four simulated fault sequences. The fixture adapter constructs canned responses from hand-authored golden outputs. A perfect **fixture-mode** score is evidence of harness conformance, **not** evidence of model accuracy, deployment security, or provider reliability.
+```bash
+export EVAL_LIVE=I_AUTHORIZE_MODEL_CALLS
+export EVAL_PROVIDER=ollama
+export EVAL_MODEL_URL=http://127.0.0.1:11434/v1/chat/completions
+export EVAL_ALLOWED_HOSTS=127.0.0.1
+export EVAL_MODEL=llama3.2
+node tests/evaluations/benchmark.mjs --mode live --suite extended \\
+  --max-attempts 1 --timeout-ms 60000 --output /tmp/scopehatch-real-model.json
+```
 
-Metrics and their denominators:
+For a remote provider, set `EVAL_PROVIDER=openai-compatible`, a complete `https://HOST/v1/chat/completions` URL, `EVAL_ALLOWED_HOSTS=HOST`, and `EVAL_API_KEY` from an approved secret manager. Configure optional `EVAL_TEMPERATURE` (0–2, default 0), `EVAL_SEED` (omitted by default), `EVAL_MAX_OUTPUT_TOKENS` (default 2048) and `EVAL_JSON_MODE=false` for providers without JSON-object response mode. Provider support for seed and JSON mode varies; those settings are recorded, not presumed effective. Model access can incur charges; no real inference is executed by ordinary CI.
 
-- `requiredFieldAccuracy`: correct catalog ID and quantity fields / gold fields, with two additional denominator penalties per unexpected mapping.
-- `evidenceSpanValidity`: generated spans that exactly match the original JavaScript UTF-16 brief substring / generated evidence spans. Missing spans additionally fail schema and attribution scoring.
-- `evidenceAttributionAccuracy`: expected deliverables with citation covering the gold support quote / expected deliverables.
-- `unknownAbstentionAccuracy`: correctly null quantities or correctly omitted unrecognized services / required abstentions.
-- `unknownLabelAccuracy`: expected normalized unknown labels found / union of expected and output labels.
-- `falseCommitmentRate`: attempted extractions containing forbidden authority/price fields or explicit approval/quote claims / attempted extractions.
-- `schemaValidationPassRate`: strictly valid extraction responses / attempted extractions.
-- `taskCompletionUnderApprovalRules`: workflows with expected allow/deny, rejection code, and correct catalog-derived price / workflows.
-- `failureRecoveryBehavior`: correct scripted bounded-retry outcomes / scripted fault scenarios.
+The CLI refuses model calls unless `EVAL_LIVE` is exactly `I_AUTHORIZE_MODEL_CALLS`, provider/model/endpoint/host are explicitly configured, and remote transport uses HTTPS. Redirects are rejected and provider response bodies are capped. Retry count defaults to 1; opt into additional retries consciously. Reports are written with restrictive permissions using exclusive creation (existing files are not overwritten). The CLI also emits machine-readable JSON on stdout: redirect it to a trusted location and do not paste report contents into public issues without review.
 
-A zero-denominator metric is `null`, not a manufactured 100%. The checks distinguish schema correctness from evidence grounding. Citation checks are substring-based and cannot prove semantic relevance beyond gold evidence. Unknown-label matching is exact case-normalized, not synonym-sensitive. No real model call has been benchmarked until the live adapter command is actually executed.
+## Reading the report
 
-Outputs include run timestamp, duration, Node/platform/architecture/logical CPU metadata, seed, fixture SHA-256, extraction provider/model, case-level results, and the explicit evidence-class labels `deterministic_fixture_conformance_only` or `live_extraction_with_local_domain_checks`. Reports deliberately exclude raw briefs, model completions, error messages, keys, JWTs, and tracing payloads. Unreported usage is `unknown`, not zero-cost.
+- Original `metrics` and `cases` remain generated by `runner.mjs`; this preserves metric definitions across suites. **Compare numbers only for the same corpus SHA and suite.** Strict means all legacy gates plus added quantity-evidence/adversarial checks pass; it is not a production approval.
+- `benchmark.corpusSha256`, `benchmark.suite`, `execution`, and `benchmark.model` record corpus hash, model request name, provider, temperature, seed, token cap, JSON-mode and run environment. `reportedModel` is included only when the provider supplied an acceptable identifier.
+- `benchmark.extendedMetrics.quantityEvidenceSupportRate` verifies exact UTF-16 substring attribution and that a known numeric quantity appears as a numeric token in its cited span. `adversarialCaseGroundingPassRate` evaluates full field/attribution/schema/authority correctness for tagged synthetic cases. These are additional metrics, **not** substitutions for the earlier metrics.
+- `benchmark.measurements` contains safe per-call latency and only provider-reported usage/cost. Token totals are `null` whenever any successful call lacks complete counts; `unknown` is not zero. Costs are captured only if the response explicitly supplies numeric `usage.cost` with an uppercase ISO currency in `usage.currency`; no inferred charges, currency conversion or unsafe float aggregation. Failure measurements have unknown usage/cost; provider billing must be reconciled separately.
+- Reports never intentionally contain raw briefs, model completions, raw error text, API keys, JWTs or tenant data. They contain synthetic case IDs and boolean/counter outcomes. The corpus is fictional; do not add private customer briefs to fixtures or commit local reports.
 
-## Coverage gaps and integration handoff
+## Limits and release handoff
 
-- The current scenario runner exercises pure `src/domain.mjs` invariants (self-approval, stale revision/catalog, mismatched tenant/rate card, missing quantities and forged price instruction). It does not exercise HTTP auth, OIDC validation, PostgreSQL RLS, idempotency, concurrent approvals, or durable audit.
-- Retry fault cases are synthetic and test classification and attempt bounds only. Provider circuit breakers, cancellation of billable requests, concurrent reservations, cost reconciliation, actual outage behavior and backoff must be assessed against the governance and persistence integrations.
-- Live model evaluations need provider-specific JSON generation settings and held-out human-annotated fixtures; this is a minimal synthetic suite, not a statistical benchmark.
-- The integrator must hook this directory into root CI and coordinate real API/model integration. No root scripts, shared fixtures, domain tests, packages or other workers' files were changed.
+The benchmark executes the **extraction model** only. Unless an actual `--workflow-adapter` is separately configured on the legacy runner, the approval/export workflow remains an in-process domain test; no live JWT, API route, RLS, durable usage reservation or tenant isolation is proven by these scores. Evidence semantic relevance, unknown-label synonyms, cost reconciliation and adversarial robustness beyond these synthetic cases need independent human evaluation. The integrator must run a local approved model and record separate evidence for Sprint 02 release gates; **no live model measurements have been produced by this PR**.
 
-See [live adapter example](../../examples/evaluation/openai-compatible.mjs).
