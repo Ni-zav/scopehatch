@@ -11,12 +11,16 @@ export interface MembershipPort {
 }
 export type ServiceRate = Readonly<{ id: string; label: string; unitPriceMinor: number }>;
 export type Catalog = Readonly<{ tenantId: string; currency: string; version: number; services: readonly ServiceRate[] }>;
+export type ProjectStatus = 'draft' | 'blocked' | 'ready' | 'pending' | 'approved';
+export type ProposalMetadata = Readonly<{overview:string;assumptions:readonly string[];exclusions:readonly string[];commercialTerms:readonly string[]}>;
+export type ProjectSummary = Readonly<{id:string;title:string;status:ProjectStatus;createdAt:string}>;
+export type ProjectPage = Readonly<{items:readonly ProjectSummary[];nextCursor:string|null}>;
 export type Deliverable = Readonly<{
-  serviceId: string; quantity: number | null; evidence: string; source: 'brief' | 'manual';
+  serviceId: string; quantity: number | null; evidence: string; source: 'brief' | 'manual'; clientDescription?: string;
 }>;
 export type Scope = Readonly<{
   tenantId: string; projectId: string; revision: number; authorId: string;
-  brief: string; deliverables: readonly Deliverable[]; unknowns: readonly string[];
+  brief: string; deliverables: readonly Deliverable[]; unknowns: readonly string[]; proposal?: ProposalMetadata;
 }>;
 export type Estimate = Readonly<{
   tenantId: string; projectId: string; scopeRevision: number; catalogVersion: number;
@@ -29,7 +33,7 @@ export type Review = Readonly<{
   state: 'pending' | 'approved'; submittedBy: string; approvedBy: string | null;
 }>;
 export type Project = Readonly<{
-  id: string; tenantId: string; title: string; brief: string; status: 'draft';
+  id: string; tenantId: string; title: string; brief: string; status: ProjectStatus; createdAt?: string;
 }>;
 export type AuditEvent = Readonly<{
   id: string; tenantId: string; projectId: string; actorId: string;
@@ -45,6 +49,10 @@ export interface UnitOfWork {
   /** Catalogs for principal tenant only, ordered descending by version. */
   listCatalogs(): Promise<readonly Catalog[]>;
   getCatalog(version: number): Promise<Catalog | null>;
+  /** Atomic owner-only compare-and-set + audit inside the same idempotent transaction. */
+  createCatalogVersion?(input: {baseVersion:number;currency:string;services:readonly ServiceRate[]}): Promise<Catalog>;
+  /** RLS-scoped keyset pagination; cursor MUST be tenant-bound and validated. */
+  listProjects?(input:{limit:number;cursor?:string}):Promise<ProjectPage>;
   getLatestScope(projectId: string): Promise<Scope | null>;
   insertScope(scope: Scope): Promise<void>;
   getEstimate(projectId: string, scopeRevision: number, catalogVersion: number): Promise<Estimate | null>;
