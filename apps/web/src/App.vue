@@ -108,6 +108,7 @@ function money(minor: number | null | undefined, currency = catalog.value?.curre
 }
 function showError(cause: unknown) {
   const issue = cause instanceof ApiError ? cause : null
+  if (issue?.status === 401 && !isDemo) { signOut(); authenticated.value = false; projectPage.value = null; snapshot.value = null }
   error.value = issue ? issue.message + (issue.requestId ? ' (Request ' + issue.requestId + ')' : '') :
     cause instanceof Error ? cause.message : 'An unexpected error occurred.'
 }
@@ -366,7 +367,7 @@ async function saveCatalog() {
   clearFeedback()
   const services = rateRows.value.map(x => ({id:x.id.trim(),label:x.label.trim(),unitPriceMinor:Number(x.price)}))
   if (!services.length || services.length > 200 || new Set(services.map(x=>x.id)).size !== services.length ||
-      services.some(x=>!x.id || !x.label || !/^\d+$/.test(String(x.unitPriceMinor)) ||
+      services.some(x=>!x.id || !x.label || (!/^\d+$/.test(x.price.trim()) || !x.price.trim()) ||
         !Number.isSafeInteger(x.unitPriceMinor) || x.unitPriceMinor < 0) || !/^[A-Z]{3}$/.test(catalogCurrency.value)) {
     error.value = 'Add 1–200 unique named services with nonnegative safe integer prices in minor units.'
     return

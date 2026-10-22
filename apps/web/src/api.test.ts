@@ -44,3 +44,40 @@ describe('HTTP v1 transport', () => {
     expect((init?.headers as Record<string, string>)['Idempotency-Key']).toBeUndefined()
   })
 })
+
+describe('Sprint 02 API transport', () => {
+  it('lists with tenant membership selector and opaque cursor, without client tenant filters', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({items:[],nextCursor:null}),{status:200})) as unknown as typeof fetch
+    const api = createHttpApi({baseUrl:'/api',getAccessToken:async()=> 'signed-token',
+      getWorkspaceId:()=> 'verified-workspace',fetchImpl})
+    await api.listProjects({limit:10,cursor:'opaque/cursor=='})
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0]!
+    expect(url).toBe('/api/v1/projects?limit=10&cursor=opaque%2Fcursor%3D%3D')
+    expect((init?.headers as Record<string,string>)['X-Workspace-Id']).toBe('verified-workspace')
+    expect(String(url)).not.toContain('tenantId=')
+  })
+  it('publishes a complete immutable catalog with unique idempotency key', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({catalog:{
+      tenantId:'studio',currency:'IDR',version:2,services:[{id:'render',label:'Render',unitPriceMinor:5}]
+    }}),{status:201})) as unknown as typeof fetch
+    const api=createHttpApi({baseUrl:'',getAccessToken:async()=> 'signed-token',fetchImpl})
+    const result=await api.createCatalog({baseVersion:1,currency:'IDR',services:[{id:'render',label:'Render',unitPriceMinor:5}]})
+    expect(result.version).toBe(2)
+    const [url,init]=vi.mocked(fetchImpl).mock.calls[0]!
+    expect(url).toBe('/v1/catalogs')
+    expect(JSON.parse(String(init?.body))).toEqual({baseVersion:1,currency:'IDR',services:[{id:'render',label:'Render',unitPriceMinor:5}]})
+    expect((init?.headers as Record<string,string>)['Idempotency-Key']).toMatch(/^[a-f0-9-]{36}$/i)
+  })
+  it('forwards text-only proposal changes without stripping descriptions', async () => {
+    const fetchImpl=vi.fn(async()=>new Response(JSON.stringify({scope:{revision:3}}),{status:201})) as unknown as typeof fetch
+    const api=createHttpApi({baseUrl:'',getAccessToken:async()=> 'signed-token',fetchImpl})
+    const proposal={overview:'Typed human summary',assumptions:['Model supplied'],exclusions:['Animation'],commercialTerms:['Net 30']}
+    await api.createScope('p1',{deliverables:[{serviceId:'view',quantity:1,evidence:'manual',source:'manual',clientDescription:'Two daytime views'}],unknowns:[],proposal})
+    expect(JSON.parse(String(vi.mocked(fetchImpl).mock.calls[0]?.[1]?.body))).toMatchObject({proposal,deliverables:[{clientDescription:'Two daytime views'}]})
+  })
+  it('returns server 401 and 403 errors to caller (no fixture auth fallback)', async () => {
+    const fetchImpl=vi.fn(async()=>new Response(JSON.stringify({error:{code:'FORBIDDEN',message:'Owner required',requestId:'r1'}}),{status:403})) as unknown as typeof fetch
+    const api=createHttpApi({baseUrl:'',getAccessToken:async()=> 'signed-token',fetchImpl})
+    await expect(api.createCatalog({baseVersion:0,currency:'IDR',services:[]})).rejects.toMatchObject({status:403,code:'FORBIDDEN',requestId:'r1'})
+  })
+})
