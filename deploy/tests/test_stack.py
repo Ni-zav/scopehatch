@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 import shutil
 import subprocess
+import os
 import yaml
 
 DEPLOY = Path(__file__).resolve().parents[1]
@@ -127,6 +128,19 @@ class DeploymentContract(unittest.TestCase):
             cwd=DEPLOY.parent, capture_output=True, text=True, timeout=30
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+    def test_live_disposable_recovery_on_ci_or_opt_in(self):
+        if os.environ.get("GITHUB_ACTIONS") != "true" and os.environ.get("RUN_SCOPEHATCH_DOCKER_RECOVERY") != "1":
+            self.skipTest("Full Docker restore requires GitHub Actions or explicit opt-in")
+        if not shutil.which("docker"):
+            self.fail("Docker is required for the release recovery gate on CI")
+        result = subprocess.run(
+            ["sh", "deploy/scripts/rehearse-recovery.sh"],
+            cwd=DEPLOY.parent, capture_output=True, text=True, timeout=240
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: source and restored dataset", result.stdout)
 
 if __name__ == "__main__":
     unittest.main()
