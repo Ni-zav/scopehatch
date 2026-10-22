@@ -49,11 +49,19 @@ start_pg() {
 wait_pg() {
   container=$1
   i=0
-  while [ "$i" -lt 45 ]; do
-    if docker exec "$container" pg_isready -q -U postgres -d scopehatch_dr >/dev/null 2>&1; then return; fi
+  # The official PostgreSQL image starts a TEMPORARY init server and shuts it
+  # down before starting the final server. pg_isready can return true during
+  # that init window, followed immediately by "database system is shutting
+  # down" during the first migration. Wait for the init-complete sentinel,
+  # then a successful real SQL query against the final database.
+  while [ "$i" -lt 60 ]; do
+    if docker logs "$container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
+       docker exec "$container" psql -X -At -U postgres -d scopehatch_dr -c 'SELECT 1' 2>/dev/null | grep -Fxq 1; then
+      return 0
+    fi
     i=$((i+1)); sleep 1
   done
-  echo 'Disposable PostgreSQL did not become ready' >&2
+  echo 'Disposable PostgreSQL did not finish initialization and become ready' >&2
   return 1
 }
 psql_file() {

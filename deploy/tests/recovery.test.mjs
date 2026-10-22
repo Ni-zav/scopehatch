@@ -36,6 +36,8 @@ test('recovery has strict container isolation and never targets Compose volumes'
   assert.match(text, /--network none/);
   assert.match(text, /--rm --network none/);
   assert.match(text, /trap cleanup EXIT/);
+  assert.match(text, /PostgreSQL init process complete; ready for start up/);
+  assert.match(text, /psql -X -At -U postgres -d scopehatch_dr -c 'SELECT 1'/);
   assert.match(text, /pg_dump/);
   assert.match(text, /pg_restore --list/);
   assert.match(text, /pg_restore -U postgres -d scopehatch_dr/);
