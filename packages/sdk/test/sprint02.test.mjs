@@ -132,7 +132,7 @@ test('new endpoints reject malformed success bodies rather than trusting malform
     { items: [ { id: 'x', title: 'X', status: 'exported', createdAt: '2026-10-22T01:01:00Z' } ], nextCursor: null },
     { items: [ { id: 'x', title: 'X', status: 'ready', createdAt: 'yesterday' } ], nextCursor: null },
   ];
-  const { client } = setup(malformedPages.map(json));
+  const { client } = setup(malformedPages.map(x => json(x)));
   for (const _ of malformedPages) await assert.rejects(client.listProjects(), ScopehatchProtocolError);
   const brokenCatalogs = [
     {}, { catalog: null }, { catalog: { ...catalog, version: 0 } },
