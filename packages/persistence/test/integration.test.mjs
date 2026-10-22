@@ -31,11 +31,6 @@ before(async () => {
     '../../../db/seeds/001_studios.sql',
     '../../../db/migrations/006_sprint02_catalog_proposals_projects.sql'
   ]) await admin.query(await readFile(path(f), 'utf8'));
-  await admin.query(
-    "INSERT INTO scopehatch.memberships(tenant_id,principal_id,roles) VALUES " +
-    "('studio-a','a-s02-editor',ARRAY['operator'])," +
-    "('studio-a','a-s02-owner2',ARRAY['owner']) ON CONFLICT DO NOTHING"
-  );
   store = createPersistence(app);
   const privilege = await app.query(
     "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user"
@@ -431,42 +426,68 @@ test('S02: list and detail share draft/blocked/ready/pending/approved read state
   assert.equal(result.summary.status,result.detail.status);
 });
 
-test('S02: DB denies operators catalog mutations; owners win atomic CAS; replay safe', {skip:!enabled}, async () => {
-  const editor={tenantId:'studio-a',id:'a-s02-editor'};
-  const versions=await store.withPrincipal(a,tx=>tx.listCatalogs());
-  const baseVersion=versions[0].version;
+test('S02: DB denies operator catalogs; owner CAS, replay and stale approval are isolated', {skip:!enabled}, async () => {
+  // Do not advance Studio A's catalog: Sprint 01 API tests reuse that fixture database.
+  const tenantId='s02-'+randomUUID();
+  await admin.query('INSERT INTO scopehatch.tenants(id,name) VALUES($1,$2)',
+    [tenantId,'Isolated S02 catalog race']);
+  await admin.query(
+    "INSERT INTO scopehatch.memberships(tenant_id,principal_id,roles) VALUES " +
+    "($1,'s02-owner1',ARRAY['owner']),($1,'s02-owner2',ARRAY['owner'])," +
+    "($1,'s02-editor',ARRAY['operator']),($1,'s02-reviewer',ARRAY['reviewer'])",
+    [tenantId]
+  );
+  const writer={tenantId,id:'s02-owner1'};
+  const editor={tenantId,id:'s02-editor'};
+  const reviewer={tenantId,id:'s02-reviewer'};
+  const baseVersion=0;
   const services=[{id:'render',label:'Zero rate allowed',unitPriceMinor:0}];
+  assert.deepEqual(await store.withPrincipal(writer,tx=>tx.listCatalogs()),[]);
   await assert.rejects(()=>store.withPrincipal(editor,tx=>tx.createCatalog({
     baseVersion,currency:'IDR',services
   })),{code:'FORBIDDEN'});
   await directFailure(editor,
     "INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by,service_count) " +
-    "VALUES('studio-a',$1,'IDR','a-s02-editor',1)",[baseVersion+1]);
-  await directFailure(editor,
-    "INSERT INTO scopehatch.catalog_services(tenant_id,catalog_version,service_id,label,unit_price_minor) " +
-    "VALUES('studio-a',$1,'late','Nope',0)",[baseVersion]);
+    "VALUES($1,$2,'IDR','s02-editor',1)",[tenantId,1]);
   const payload={baseVersion,currency:'IDR',services};
   const key=randomUUID();
-  const run=()=>store.withPrincipal(a,tx=>tx.idempotent({
+  const run=()=>store.withPrincipal(writer,tx=>tx.idempotent({
     key,operation:'POST /v1/catalogs',payload,execute:db=>db.createCatalog(payload)
   }));
   const [one,two]=await Promise.all([run(),run()]);
-  assert.equal(one.result.version,baseVersion+1);
+  assert.equal(one.result.version,1);
   assert.deepEqual(one.result,two.result);
   assert.equal(Number(one.replayed)+Number(two.replayed),1);
-  await assert.rejects(()=>store.withPrincipal(a,tx=>tx.idempotent({
+  await directFailure(editor,
+    "INSERT INTO scopehatch.catalog_services(tenant_id,catalog_version,service_id,label,unit_price_minor) " +
+    "VALUES($1,1,'late','Nope',0)",[tenantId]);
+  await assert.rejects(()=>store.withPrincipal(writer,tx=>tx.idempotent({
     key,operation:'POST /v1/catalogs',
     payload:{...payload,currency:'USD'},execute:()=>Promise.resolve(null)
   })),{code:'IDEMPOTENCY_CONFLICT'});
-  const owners=[a,{tenantId:'studio-a',id:'a-s02-owner2'}];
+  const projectId=randomUUID();
+  const review=await store.withPrincipal(writer,async tx=>{
+    await tx.createProject({id:projectId,title:'Catalog freshness',brief:'one image'});
+    const scope=await tx.createScope({projectId,deliverables:[
+      {serviceId:'render',quantity:1,evidence:'one image',source:'brief'}
+    ]});
+    const quote=await tx.createEstimate({projectId,scopeRevision:scope.revision,catalogVersion:1});
+    return tx.submitReview({projectId,estimateRevision:quote.revision});
+  });
+  await store.withPrincipal(reviewer,tx=>tx.approveReview({projectId,reviewId:review.id}));
+  assert.equal((await store.withPrincipal(writer,tx=>tx.getProject(projectId))).status,'approved');
+  const owners=[writer,{tenantId,id:'s02-owner2'}];
   const results=await Promise.allSettled(owners.map(principal=>store.withPrincipal(principal,tx=>
-    tx.createCatalog({baseVersion:baseVersion+1,currency:'IDR',
+    tx.createCatalog({baseVersion:1,currency:'IDR',
       services:[{id:principal.id,label:'Race',unitPriceMinor:42}]}))));
   assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
   assert.equal(results.filter(x=>x.status==='rejected'&&
     x.reason?.code==='STALE_CATALOG_VERSION').length,1);
-  assert.equal((await store.withPrincipal(a,tx=>tx.getProject('a-demo'))).status,'draft');
+  assert.equal((await store.withPrincipal(writer,tx=>tx.getProject(projectId))).status,'draft');
+  await assert.rejects(()=>store.withPrincipal(reviewer,tx=>tx.exportApproved(projectId)),
+    {code:'STALE_REVISION'});
 });
+
 
 test('S02: DB rejects malformed metadata and repository rejects overlong terms', {skip:!enabled}, async () => {
   const project=await store.withPrincipal(a,tx=>tx.createProject({
