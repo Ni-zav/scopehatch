@@ -28,8 +28,14 @@ before(async () => {
     '../../../db/migrations/001_initial.sql',
     '../../../db/migrations/002_quote_integrity.sql',
     '../../../db/migrations/003_immutable_children_usage.sql',
-    '../../../db/seeds/001_studios.sql'
+    '../../../db/seeds/001_studios.sql',
+    '../../../db/migrations/006_sprint02_catalog_proposals_projects.sql'
   ]) await admin.query(await readFile(path(f), 'utf8'));
+  await admin.query(
+    "INSERT INTO scopehatch.memberships(tenant_id,principal_id,roles) VALUES " +
+    "('studio-a','a-s02-editor',ARRAY['operator'])," +
+    "('studio-a','a-s02-owner2',ARRAY['owner']) ON CONFLICT DO NOTHING"
+  );
   store = createPersistence(app);
   const privilege = await app.query(
     "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user"
@@ -309,4 +315,131 @@ test('identity pool role has no superuser, bypass RLS, or schema ownership', { s
   assert.equal(r.rows[0].rolbypassrls,false);
   assert.equal(r.rows[0].member,true);
   assert.equal(r.rows[0].active,true);
+});
+
+
+test('S02: migration backfills normalized metadata; tenant-isolated stable pagination', {skip:!enabled}, async () => {
+  const legacy = await store.withPrincipal(a, tx => tx.getScope('a-demo',1));
+  assert.deepEqual(legacy.proposal, {overview:'',assumptions:[],exclusions:[],commercialTerms:[]});
+  assert.equal(legacy.deliverables[0].clientDescription,'');
+  const id = randomUUID();
+  const ids = [id + '-a', id + '-b'];
+  await store.withPrincipal(a,async tx=>{
+    for (const projectId of ids) await tx.createProject({id:projectId,title:projectId,brief:'test'});
+  });
+  const first = await store.withPrincipal(reviewerA,tx=>tx.listProjects({limit:1}));
+  assert.equal(first.items.length,1);
+  assert.ok(!('brief' in first.items[0]));
+  const seen=[];
+  let cursor;
+  do {
+    const page=await store.withPrincipal(reviewerA,tx=>tx.listProjects({limit:2,cursor}));
+    seen.push(...page.items);
+    cursor=page.nextCursor??undefined;
+  } while(cursor);
+  assert.equal(new Set(seen.map(x=>x.id)).size,seen.length);
+  assert.deepEqual(seen.filter(x=>ids.includes(x.id)).map(x=>x.id),[ids[1],ids[0]]);
+  assert.ok(ids.every(x=>seen.some(row=>row.id===x&&row.status==='draft')));
+  const foreign=await store.withPrincipal(b,tx=>tx.listProjects({limit:100}));
+  assert.ok(foreign.items.every(row=>!ids.includes(row.id)));
+  await assert.rejects(()=>store.withPrincipal(b,tx=>tx.listProjects({cursor:first.nextCursor})),
+    {code:'INVALID_CURSOR'});
+  await assert.rejects(()=>store.withPrincipal(a,tx=>tx.listProjects({cursor:'malformed'})),
+    {code:'INVALID_CURSOR'});
+  await assert.rejects(()=>store.withPrincipal(a,tx=>tx.listProjects({limit:101})),
+    {code:'INVALID_INPUT'});
+});
+
+test('S02: approved proposal uses immutable exact revision and safely rendered metadata', {skip:!enabled}, async () => {
+  const projectId=randomUUID();
+  const proposal={overview:'Exterior images',assumptions:['Model supplied'],
+    exclusions:['No animation <script>alert(1)</script>'],
+    commercialTerms:['Payment within 10 days']};
+  const line={serviceId:'render',quantity:2,evidence:'two images',source:'brief',
+    clientDescription:'Dusk view <img src=x>'};
+  const result=await store.withPrincipal(a,async tx=>{
+    await tx.createProject({id:projectId,title:'Rich proposal',brief:'two images'});
+    const scope=await tx.createScope({projectId,proposal,deliverables:[line]});
+    const quote=await tx.createEstimate({projectId,scopeRevision:scope.revision,catalogVersion:1});
+    const review=await tx.submitReview({projectId,estimateRevision:quote.revision});
+    return {scope,quote,review};
+  });
+  assert.equal(result.quote.totalMinor,400000);
+  await store.withPrincipal(reviewerA,tx=>tx.approveReview({projectId,reviewId:result.review.id}));
+  const exported=await store.withPrincipal(a,tx=>tx.exportApproved(projectId));
+  assert.deepEqual(exported.proposal,proposal);
+  assert.match(exported.markdown,/Payment within 10 days/);
+  assert.match(exported.markdown,/Dusk view/);
+  assert.doesNotMatch(exported.markdown,/<img|<script>/);
+  const read=await store.withPrincipal(a,tx=>tx.getScope(projectId));
+  assert.equal(read.deliverables[0].clientDescription,line.clientDescription);
+  await directFailure(a,
+    "UPDATE scopehatch.scope_revisions SET proposal='{}' WHERE tenant_id='studio-a' AND project_id=$1",
+    [projectId]);
+  await directFailure(a,
+    "UPDATE scopehatch.scope_deliverables SET client_description='forged' WHERE tenant_id='studio-a' AND project_id=$1",
+    [projectId]);
+  const revised=await store.withPrincipal(a,tx=>tx.createScope({
+    projectId,proposal:{...proposal,commercialTerms:['Payment due immediately']},
+    deliverables:[line]
+  }));
+  assert.equal(revised.revision,result.scope.revision+1);
+  assert.equal((await store.withPrincipal(a,tx=>tx.getProject(projectId))).status,'draft');
+  await assert.rejects(()=>store.withPrincipal(reviewerA,tx=>tx.exportApproved(projectId)),
+    {code:'STALE_REVISION'});
+  await assert.rejects(()=>store.withPrincipal(a,tx=>tx.createScope({
+    projectId,proposal:{...proposal,commercialTerms:['   ']},deliverables:[line]
+  })),{code:'INVALID_INPUT'});
+});
+
+test('S02: DB denies operators catalog mutations; owners win atomic CAS; replay safe', {skip:!enabled}, async () => {
+  const editor={tenantId:'studio-a',id:'a-s02-editor'};
+  const versions=await store.withPrincipal(a,tx=>tx.listCatalogs());
+  const baseVersion=versions[0].version;
+  const services=[{id:'render',label:'Zero rate allowed',unitPriceMinor:0}];
+  await assert.rejects(()=>store.withPrincipal(editor,tx=>tx.createCatalog({
+    baseVersion,currency:'IDR',services
+  })),{code:'FORBIDDEN'});
+  await directFailure(editor,
+    "INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by,service_count) " +
+    "VALUES('studio-a',$1,'IDR','a-s02-editor',1)",[baseVersion+1]);
+  await directFailure(editor,
+    "INSERT INTO scopehatch.catalog_services(tenant_id,catalog_version,service_id,label,unit_price_minor) " +
+    "VALUES('studio-a',$1,'late','Nope',0)",[baseVersion]);
+  const payload={baseVersion,currency:'IDR',services};
+  const key=randomUUID();
+  const run=()=>store.withPrincipal(a,tx=>tx.idempotent({
+    key,operation:'POST /v1/catalogs',payload,execute:db=>db.createCatalog(payload)
+  }));
+  const [one,two]=await Promise.all([run(),run()]);
+  assert.equal(one.result.version,baseVersion+1);
+  assert.deepEqual(one.result,two.result);
+  assert.equal(Number(one.replayed)+Number(two.replayed),1);
+  await assert.rejects(()=>store.withPrincipal(a,tx=>tx.idempotent({
+    key,operation:'POST /v1/catalogs',
+    payload:{...payload,currency:'USD'},execute:()=>Promise.resolve(null)
+  })),{code:'IDEMPOTENCY_CONFLICT'});
+  const owners=[a,{tenantId:'studio-a',id:'a-s02-owner2'}];
+  const results=await Promise.allSettled(owners.map(principal=>store.withPrincipal(principal,tx=>
+    tx.createCatalog({baseVersion:baseVersion+1,currency:'IDR',
+      services:[{id:principal.id,label:'Race',unitPriceMinor:42}]}))));
+  assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
+  assert.equal(results.filter(x=>x.status==='rejected'&&
+    x.reason?.code==='STALE_CATALOG_VERSION').length,1);
+  assert.equal((await store.withPrincipal(a,tx=>tx.getProject('a-demo'))).status,'draft');
+});
+
+test('S02: DB rejects malformed metadata and repository rejects overlong terms', {skip:!enabled}, async () => {
+  const project=await store.withPrincipal(a,tx=>tx.createProject({
+    title:'S02 metadata constraint',brief:'one image'
+  }));
+  await directFailure(a,
+    "INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,"+
+    "author_id,unknowns,line_count,proposal) VALUES('studio-a',$1,1,1,'a-operator','[]',0,$2::jsonb)",
+    [project.id,JSON.stringify({overview:'',assumptions:[{}],exclusions:[],commercialTerms:[]})]);
+  await assert.rejects(()=>store.withPrincipal(a,tx=>tx.createScope({
+    projectId:project.id,deliverables:[],proposal:{
+      overview:'',assumptions:[],exclusions:[],commercialTerms:['x'.repeat(2001)]
+    }
+  })),{code:'INVALID_INPUT'});
 });
