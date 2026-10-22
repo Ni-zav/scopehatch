@@ -7,7 +7,8 @@ import { InputError, DatabaseError, provisionTenant, validateRequest } from './b
 const HELP = `Scopehatch offline administrator (run ONLY on the trusted host)\n\nUsage:\n  node tools/onboarding/cli.mjs tenant create \\\n    --tenant-id studio-example --workspace-name "Example Studio" \\\n    --owner-sub "exact-verified-oidc-sub" --issuer "<configured-oidc-issuer>" \\\n    --environment production --confirm-database scopehatch \\\n    --admin-db-url-file /secure/admin-db-url --confirm-subject-verified [--dry-run]\n\nPrerequisites (mandatory): OIDC_ISSUER and SCOPEHATCH_DEPLOYMENT_ENV in host\nenvironment, matching --issuer and --environment exactly. --confirm-subject-verified\nmeans a trusted operator has checked the owner sub against the configured IdP\nand a signed issuer/audience-verified access token (see docs/first-run).\n\nReturn codes: 0 created/unchanged/dry-run; 2 invalid input or configuration;\n3 conflicting tenant/ownership; 4 database/connectivity/schema/privilege failure.\nNever pass connection strings, passwords or tokens as command-line arguments.\n`;
 const flags = new Map([['--tenant-id','tenantId'],['--workspace-name','workspaceName'],['--owner-sub','ownerSub'],['--issuer','issuer'],['--environment','environment'],['--confirm-database','database'],['--admin-db-url-file','secretFile']]);
 export function parseArgs(argv) {
-  if (argv.length === 1 && ['--help','-h'].includes(argv[0])) return {help:true};
+  if ((argv.length === 1 && ['--help','-h'].includes(argv[0])) ||
+      (argv.length === 3 && argv[0] === 'tenant' && argv[1] === 'create' && ['--help','-h'].includes(argv[2]))) return {help:true};
   if (argv[0] !== 'tenant' || argv[1] !== 'create') throw new InputError('Expected tenant create (use --help)');
   const data = {};
   for (let i=2;i<argv.length;i++) {
