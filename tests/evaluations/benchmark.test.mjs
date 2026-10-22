@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {dirname,resolve} from 'node:path';
 import {loadBenchmarkFixtures,runBenchmark,supportedQuantities} from './benchmark.mjs';
 import {createEvaluationAdapter,validateProviderConfig} from '../../examples/evaluation/openai-compatible.mjs';
+import {inspectSuggestion} from './runner.mjs';
 
 const config={provider:'ollama',endpoint:'http://127.0.0.1:11434/v1/chat/completions',
   model:'synthetic-mock',allowedHosts:['127.0.0.1'],temperature:0,seed:7,maxOutputTokens:1200};
@@ -112,4 +113,31 @@ test('live CLI rejects unapproved execution before contacting any provider',()=>
   assert.equal(result.status,2);
   assert.match(result.stderr,/redacted/);
   assert.equal(result.stdout,'');
+});
+
+test('an unquantified draft may correctly abstain with null evidence',()=>{
+  const output={suggestedDeliverables:[{serviceId:'interior-render',quantity:null,evidence:null}],
+    unknowns:['quantity'],provider:'ollama',model:'synthetic-mock',usage:{status:'unknown'}};
+  assert.equal(inspectSuggestion(output,'Render the interior.',new Set(['interior-render'])).schemaValid,true);
+  output.suggestedDeliverables[0].quantity=2;
+  assert.ok(inspectSuggestion(output,'Render the interior.',new Set(['interior-render'])).issues.includes('invalid_evidence_object'));
+});
+test('non-2xx and oversize provider replies fail safely without raw response disclosure',async()=>{
+  const request={requestId:'fixture',brief:'Render 2 images.',serviceCatalog:[{id:'interior-render',label:'Interior'}]};
+  const throttle=createEvaluationAdapter({config,fetchImpl:async()=>new Response('{}',{status:429})});
+  await assert.rejects(throttle.extractBrief(request),{code:'RATE_LIMIT'});
+  const enormous=createEvaluationAdapter({config,fetchImpl:async()=>new Response('private-data'.repeat(7000))});
+  await assert.rejects(enormous.extractBrief(request),{code:'SCHEMA_ERROR'});
+  assert.deepEqual(enormous.observations()[0].usage,{status:'unknown'});
+  assert.ok(!JSON.stringify(enormous.observations()).includes('private-data'));
+});
+test('legacy model adapter also refuses unapproved calls',()=>{
+  const root=dirname(fileURLToPath(import.meta.url));
+  const modulePath=resolve(root,'../../examples/evaluation/openai-compatible.mjs');
+  const script="import {extractBrief} from "+JSON.stringify('file://'+modulePath)+
+    ";extractBrief({brief:'test',serviceCatalog:[],requestId:'a'},{}).catch(e=>{console.log(e.code)});";
+  const result=spawnSync(process.execPath,['--input-type=module','-e',script],{
+    env:{...process.env,EVAL_LIVE:''},encoding:'utf8'});
+  assert.equal(result.status,0);
+  assert.match(result.stdout,/PROVIDER_NOT_AUTHORIZED/);
 });
