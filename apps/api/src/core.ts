@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { AuditEvent, Catalog, Deliverable, Estimate, HttpResult, PersistencePort, Principal, Project, Review, Scope, UnitOfWork, ProposalMetadata } from './ports.ts';
-import { normalizeScope, normalizeProposal, validateProposal, renderProposalMarkdown } from './proposal.ts';
+import { normalizeScope, normalizeProposal, validateProposal } from './proposal.ts';
 // Root JS domain kernel is frozen by another owner and has no TS declaration file.
 // @ts-expect-error External .mjs boundary; model typing is enforced by local port types.
 import { createScopeRevision, estimateScope, submitReview, approveReview, exportProposal } from '../../../src/domain.mjs';
@@ -195,7 +195,7 @@ export class ApplicationService {
       const estimate = requireBoundEstimate(await tx.getEstimate(id, revision, catalog.version));
       const review = await tx.getReview(id, revision, catalog.version);
       const approved=exportProposal({ scope, estimate, review });
-      return {...approved,proposal:normalizeProposal(scope.proposal),markdown:approved.markdown+renderProposalMarkdown(scope)};
+      return {...approved,proposal:normalizeProposal(scope.proposal)};
     });
   }
   audit(principal: Principal, id: string, cursor: string | undefined, limit: number) {
