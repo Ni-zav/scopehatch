@@ -303,6 +303,7 @@ export function exportProposal({
     headingItems(proposal.commercialTerms),
     '## Catalog-based estimate',
     '**Total: ' + formatMoneyMinor(estimate.totalMinor, estimate.currency) + '**',
+    'Authoritative minor-unit total: ' + estimate.totalMinor + ' ' + estimate.currency + '.',
     'Catalog version: ' + estimate.catalogVersion + '; scope revision: ' + scope.revision + '.',
     'Human review recorded for this revision by: ' + markdownText(review.approvedBy) + '.',
     '_Review authorizes export of this draft only; it is not a signature._'
