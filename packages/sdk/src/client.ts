@@ -1,6 +1,7 @@
 import type {
-  AuditOptions, AuditPage, Catalog, CreateProjectRequest, CreateScopeRequest,
-  CredentialProvider, Estimate, ExportedProposal, FetchTransport, ProjectDetails,
+  AuditOptions, AuditPage, Catalog, CreateCatalogRequest, CreateProjectRequest, CreateScopeRequest,
+  CredentialProvider, Estimate, ExportedProposal, FetchTransport, ListProjectsOptions, ProjectDetails,
+  ProjectPage, ProposalMetadata,
   RequestOptions, RevisionBinding, Review, Scope, ScopehatchClientOptions,
   SuggestionRequest, SuggestionResult, WriteOptions,
 } from './types.js';
@@ -53,6 +54,107 @@ function validateBaseUrl(value: string): string {
     throw new ScopehatchConfigurationError('baseUrl must be an HTTP(S) URL without userinfo, query or fragment');
   }
   return url.href.replace(/\/+$/, '');
+}
+
+
+const STATUS = new Set(['draft', 'blocked', 'ready', 'pending', 'approved']);
+const CURSOR = /^[A-Za-z0-9._~-]{1,512}$/;
+function nonempty(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+function currencyCode(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value)) return false;
+  try {
+    // Intl.NumberFormat accepts invented three-letter codes; supportedValuesOf does not.
+    if (!Intl.supportedValuesOf('currency').includes(value)) return false;
+    new Intl.NumberFormat('en', { style: 'currency', currency: value });
+    return true;
+  } catch { return false; }
+}
+function optionalCursor(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !CURSOR.test(value)) {
+    throw new ScopehatchConfigurationError(label + ' must be 1-512 URL-safe characters');
+  }
+  return value;
+}
+function validateCatalogInput(input: CreateCatalogRequest): CreateCatalogRequest {
+  if (!asRecord(input)) throw new ScopehatchConfigurationError('Catalog input is required');
+  wholeNumber(input.baseVersion, 'baseVersion', 0);
+  if (!currencyCode(input.currency)) throw new ScopehatchConfigurationError('Invalid ISO currency code');
+  if (!Array.isArray(input.services) || input.services.length < 1 || input.services.length > 200) {
+    throw new ScopehatchConfigurationError('services must contain 1-200 entries');
+  }
+  const seen = new Set<string>();
+  const services = input.services.map((s, i) => {
+    if (!asRecord(s) || !nonempty(s.id) || !nonempty(s.label)) {
+      throw new ScopehatchConfigurationError('Each service requires an id and label');
+    }
+    if (seen.has(s.id)) throw new ScopehatchConfigurationError('Duplicate service id');
+    seen.add(s.id);
+    wholeNumber(s.unitPriceMinor as number, 'services[' + i + '].unitPriceMinor', 0);
+    return { id: s.id, label: s.label, unitPriceMinor: s.unitPriceMinor as number };
+  });
+  return { baseVersion: input.baseVersion, currency: input.currency, services };
+}
+function serializeProposal(value: ProposalMetadata): ProposalMetadata {
+  if (!asRecord(value) || typeof value.overview !== 'string' || value.overview.length > 4000) {
+    throw new ScopehatchConfigurationError('proposal.overview must be 0-4000 characters');
+  }
+  const strings = (field: 'assumptions' | 'exclusions' | 'commercialTerms'): string[] => {
+    const v = value[field];
+    if (!Array.isArray(v) || v.length > 50 || v.some(x => typeof x !== 'string' ||
+      x.trim().length < 1 || x.trim().length > 2000)) {
+      throw new ScopehatchConfigurationError('Invalid proposal.' + field);
+    }
+    return v.slice(); // preserve human-authored text; trim only for validation
+  };
+  return {
+    overview: value.overview,
+    assumptions: strings('assumptions'),
+    exclusions: strings('exclusions'),
+    commercialTerms: strings('commercialTerms'),
+  };
+}
+function clientDescription(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 2000) {
+    throw new ScopehatchConfigurationError('clientDescription must be 0-2000 characters');
+  }
+  return value;
+}
+function validateMetadataSize(value: unknown): void {
+  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 65_536) {
+    throw new ScopehatchConfigurationError('Proposal metadata exceeds 64 KiB');
+  }
+}
+function projectPage(value: unknown): ProjectPage {
+  if (!asRecord(value) || !Array.isArray(value.items) ||
+    !(value.nextCursor === null || (typeof value.nextCursor === 'string' && CURSOR.test(value.nextCursor)))) {
+    throw new ScopehatchProtocolError();
+  }
+  const items = value.items.map(item => {
+    if (!asRecord(item) || !nonempty(item.id) || typeof item.title !== 'string' ||
+      typeof item.status !== 'string' || !STATUS.has(item.status) ||
+      typeof item.createdAt !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(item.createdAt) ||
+      !Number.isFinite(Date.parse(item.createdAt))) throw new ScopehatchProtocolError();
+    // Do not expose an unexpected brief or tenant field from a malformed list implementation.
+    return { id: item.id, title: item.title, status: item.status as ProjectPage['items'][number]['status'],
+      createdAt: item.createdAt };
+  });
+  return { items, nextCursor: value.nextCursor as string | null };
+}
+function catalogResponse(value: unknown): Catalog {
+  const catalog = envelope<unknown>(value, 'catalog');
+  if (!asRecord(catalog) || !nonempty(catalog.tenantId) ||
+    !currencyCode(catalog.currency) || !Number.isSafeInteger(catalog.version) ||
+    (catalog.version as number) < 1 || !Array.isArray(catalog.services) ||
+    catalog.services.length < 1 || catalog.services.length > 200 ||
+    catalog.services.some(service => !asRecord(service) || !nonempty(service.id) ||
+      !nonempty(service.label) || !Number.isSafeInteger(service.unitPriceMinor) ||
+      (service.unitPriceMinor as number) < 0)) {
+    throw new ScopehatchProtocolError();
+  }
+  return catalog as unknown as Catalog;
 }
 
 export function staticBearerToken(token: string): CredentialProvider {
@@ -185,6 +287,19 @@ export class ScopehatchClient {
   async listCatalogs(options?: RequestOptions): Promise<Catalog[]> {
     return envelope<Catalog[]>(await this.request<unknown>('GET', '/v1/catalogs', options), 'items');
   }
+  /** Only an authenticated owner may publish a full immutable catalog version. */
+  async createCatalog(input: CreateCatalogRequest, options: WriteOptions): Promise<Catalog> {
+    const validated = validateCatalogInput(input);
+    return catalogResponse(await this.request<unknown>('POST', '/v1/catalogs', options, validated, options));
+  }
+  /** The server binds cursor, status and results to the verified workspace membership. */
+  async listProjects(options: ListProjectsOptions = {}): Promise<ProjectPage> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set('limit', String(wholeNumber(options.limit, 'limit', 1, 100)));
+    if (options.cursor !== undefined) query.set('cursor', optionalCursor(options.cursor, 'cursor'));
+    const suffix = query.size ? '?' + query.toString() : '';
+    return projectPage(await this.request<unknown>('GET', '/v1/projects' + suffix, options));
+  }
   async createProject(input: CreateProjectRequest, options: WriteOptions): Promise<ProjectDetails['project']> {
     const value = await this.request<unknown>('POST', '/v1/projects', options, {
       title: input.title, brief: input.brief,
@@ -197,10 +312,20 @@ export class ScopehatchClient {
     return result as ProjectDetails;
   }
   async createScope(projectId: string, input: CreateScopeRequest, options: WriteOptions): Promise<Scope> {
+    const deliverables = input.deliverables.map(d => ({
+      serviceId: d.serviceId, quantity: d.quantity, evidence: d.evidence, source: d.source,
+      ...(d.clientDescription === undefined ? {} : { clientDescription: clientDescription(d.clientDescription) }),
+    }));
+    const proposal = input.proposal === undefined ? undefined : serializeProposal(input.proposal);
+    if (proposal !== undefined || deliverables.some(d => Object.hasOwn(d, 'clientDescription'))) {
+      validateMetadataSize({
+        ...(proposal === undefined ? {} : { proposal }),
+        clientDescriptions: deliverables.map(d => d.clientDescription ?? ''),
+      });
+    }
     const value = await this.request<unknown>('POST', `/v1/projects/${segment(projectId)}/scopes`, options, {
-      deliverables: input.deliverables.map(d => ({
-        serviceId: d.serviceId, quantity: d.quantity, evidence: d.evidence, source: d.source,
-      })), unknowns: input.unknowns,
+      deliverables, unknowns: input.unknowns,
+      ...(proposal === undefined ? {} : { proposal }),
     }, options);
     return envelope(value, 'scope');
   }

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, createHttpApi } from './api'
 import { beginSignIn, finishSignIn, getAccessToken, isSignedIn, oidcConfigured, signOut } from './oidc'
 import { DemoApi, fixtureProjectId, type FixturePersona } from './demo'
-import type { AuditEvent, Catalog, Deliverable, ProposalExport, ScopehatchApi, Snapshot, SuggestionResponse } from './types'
+import type { AuditEvent, Catalog, Deliverable, ProjectPage, ProposalMetadata, ProposalExport, ScopehatchApi, Snapshot, SuggestionResponse } from './types'
 
-type EditableLine = { key: number; serviceId: string; quantity: string; evidence: string; source: 'brief' | 'manual' }
+type EditableLine = { key: number; serviceId: string; quantity: string; evidence: string; source: 'brief' | 'manual'; clientDescription: string }
+type RateLine = { key: number; id: string; label: string; price: string }
 const isDemo = import.meta.env.VITE_SCOPEHATCH_DEMO === 'true'
 const fixture = isDemo ? new DemoApi() : null
 // Production has no implicit session, hardcoded bearer token, tenant header or role override.
@@ -19,8 +20,22 @@ const api: ScopehatchApi = fixture ?? createHttpApi({
 const authenticated = ref(isDemo || isSignedIn())
 const oidcReady = isDemo || oidcConfigured()
 const persona = ref<FixturePersona>('operator')
-const view = ref<'workbench' | 'new'>('workbench')
+const view = ref<'index' | 'workbench' | 'new' | 'catalog'>('index')
 const projectIdInput = ref('')
+const projectPage = ref<ProjectPage | null>(null)
+const pageCursors = ref<(string | null)[]>([null])
+const pageNumber = ref(0)
+const listBusy = ref(false)
+const rateRows = ref<RateLine[]>([])
+const catalogBaseVersion = ref(0)
+const catalogCurrency = ref('IDR')
+const catalogDirty = ref(false)
+const catalogSaving = ref(false)
+const ownerDenied = ref(false)
+const metadata = ref<ProposalMetadata>({overview:'',assumptions:[],exclusions:[],commercialTerms:[]})
+const assumptionsText = ref('')
+const exclusionsText = ref('')
+const commercialTermsText = ref('')
 const currentId = ref('')
 const catalogs = ref<Catalog[]>([])
 const snapshot = ref<Snapshot | null>(null)
@@ -59,7 +74,8 @@ const approved = computed(() => reviewCurrent.value && review.value?.state === '
   estimate.value?.state === 'ready' && !draftDirty.value)
 const pending = computed(() => reviewCurrent.value && review.value?.state === 'pending')
 const blocked = computed(() => estimate.value?.state === 'blocked')
-const canEdit = computed(() => isDemo ? persona.value === 'operator' : authenticated.value)
+const canEdit = computed(() => isDemo ? persona.value === 'operator' || persona.value === 'owner' : authenticated.value)
+const canManageCatalog = computed(() => authenticated.value && !ownerDenied.value && (!isDemo || persona.value === 'owner'))
 const hasProject = computed(() => view.value === 'workbench' && Boolean(snapshot.value))
 const localInvalid = computed(() => lines.value.some(l => {
   const q = String(l.quantity ?? '').trim()
@@ -92,6 +108,7 @@ function money(minor: number | null | undefined, currency = catalog.value?.curre
 }
 function showError(cause: unknown) {
   const issue = cause instanceof ApiError ? cause : null
+  if (issue?.status === 401 && !isDemo) { signOut(); authenticated.value = false; projectPage.value = null; snapshot.value = null }
   error.value = issue ? issue.message + (issue.requestId ? ' (Request ' + issue.requestId + ')' : '') :
     cause instanceof Error ? cause.message : 'An unexpected error occurred.'
 }
@@ -100,14 +117,23 @@ function edit() { draftDirty.value = true; proposal.value = null; notice.value =
 function hydrateDraft() {
   lines.value = (scope.value?.deliverables ?? []).map(item => ({
     key: ++rowKey, serviceId: item.serviceId, quantity: item.quantity === null ? '' : String(item.quantity),
-    evidence: item.evidence, source: item.source
+    evidence: item.evidence, source: item.source, clientDescription: item.clientDescription ?? ''
   }))
   unknowns.value = scope.value?.unknowns.join('\n') ?? ''
+  metadata.value = {
+    overview:scope.value?.proposal?.overview ?? '',
+    assumptions:[...(scope.value?.proposal?.assumptions ?? [])],
+    exclusions:[...(scope.value?.proposal?.exclusions ?? [])],
+    commercialTerms:[...(scope.value?.proposal?.commercialTerms ?? [])]
+  }
+  assumptionsText.value = metadata.value.assumptions.join('\n')
+  exclusionsText.value = metadata.value.exclusions.join('\n')
+  commercialTermsText.value = metadata.value.commercialTerms.join('\n')
   activeEvidence.value = ''
   draftDirty.value = false
 }
 function addLine() {
-  lines.value.push({ key: ++rowKey, serviceId: catalog.value?.services[0]?.id ?? '', quantity: '', evidence: '', source: 'manual' })
+  lines.value.push({ key: ++rowKey, serviceId: catalog.value?.services[0]?.id ?? '', quantity: '', evidence: '', source: 'manual', clientDescription: '' })
   edit()
 }
 function removeLine(key: number) { lines.value = lines.value.filter(line => line.key !== key); edit() }
@@ -172,6 +198,7 @@ async function newProject() {
     creatingTitle.value = ''
     creatingBrief.value = ''
     await loadProject(project.id)
+    await loadIndex()
     notice.value = 'Original brief saved. Add scoped deliverables to begin.'
   })
 }
@@ -207,7 +234,7 @@ function applySuggestionsToDraft(){
       key:++rowKey,serviceId:item.serviceId,
       quantity:quote && item.quantity!==null ? String(item.quantity) : '',
       evidence:quote??'AI suggestion without verifiable source evidence — confirm manually',
-      source:quote?'brief' as const:'manual' as const
+      source:quote?'brief' as const:'manual' as const, clientDescription: ''
     }
   })
   if(!accepted.length)return
@@ -225,10 +252,23 @@ async function saveScope() {
   await run(async () => {
     const deliverables: Deliverable[] = lines.value.map(l => ({
       serviceId: l.serviceId, quantity: String(l.quantity ?? '').trim() === '' ? null : Number(l.quantity),
-      evidence: l.evidence.trim(), source: l.source
+      evidence: l.evidence.trim(), source: l.source,
+      ...(l.clientDescription.trim() ? { clientDescription: l.clientDescription } : {})
     }))
     const unknownList = unknowns.value.split('\n').map(s => s.trim()).filter(Boolean)
-    const next = await api.createScope(targetId, { deliverables, unknowns: unknownList })
+    const proposalMetadata: ProposalMetadata = {
+      overview: metadata.value.overview,
+      assumptions: parseLines(assumptionsText.value),
+      exclusions: parseLines(exclusionsText.value),
+      commercialTerms: parseLines(commercialTermsText.value)
+    }
+    validateProposal(proposalMetadata, deliverables)
+    // Sprint 02 metadata is additive. Omit absent optional fields so the
+    // unchanged Sprint 01 workflow remains operable until the API PR lands.
+    const hasProposal = Boolean(proposalMetadata.overview || proposalMetadata.assumptions.length ||
+      proposalMetadata.exclusions.length || proposalMetadata.commercialTerms.length)
+    const next = await api.createScope(targetId, { deliverables, unknowns: unknownList,
+      ...(hasProposal ? {proposal:proposalMetadata} : {}) })
     await api.estimate(targetId, { scopeRevision: next.revision, catalogVersion: catalog.value!.version })
     await reload('Revision ' + next.revision + ' saved and recalculated. Previous approvals do not transfer.')
   })
@@ -284,12 +324,13 @@ async function beginLogin() {
   try { await beginSignIn() } catch(cause) { showError(cause) }
 }
 async function changeWorkspace() {
-  if (isDemo || !authenticated.value) return
+  if (isDemo || !authenticated.value || !guardUnsaved()) return
+  ownerDenied.value = false
   sessionStorage.setItem('scopehatch.workspace', selectedWorkspace.value.trim())
   snapshot.value = null
   currentId.value = ''
   catalogs.value = []
-  await run(async () => { catalogs.value = await api.catalogs() })
+  await run(async () => { await loadWorkspace() })
 }
 async function disconnect() {
   signOut()
@@ -298,7 +339,120 @@ async function disconnect() {
   catalogs.value = []
   currentId.value = ''
   clearFeedback()
+  projectPage.value = null
+  ownerDenied.value = false
+  catalogDirty.value = false
+  draftDirty.value = false
+  view.value = 'index'
 }
+
+function parseLines(value: string) { return value.split('\n').map(x => x.trim()).filter(Boolean) }
+function validateProposal(value: ProposalMetadata, deliverables: Deliverable[]) {
+  const groups = [value.assumptions,value.exclusions,value.commercialTerms]
+  if (value.overview.length > 4000 || groups.some(a => a.length > 50 || a.some(x => x.length > 2000)) ||
+      deliverables.some(x => (x.clientDescription ?? '').length > 2000) || JSON.stringify(value).length > 65536)
+    throw new ApiError(422,'INVALID_INPUT','Proposal text exceeds the contract limits. Use shorter descriptions and up to 50 entries per section.')
+}
+function guardUnsaved() {
+  return !(draftDirty.value || catalogDirty.value) ||
+    window.confirm('Discard unsaved scope or catalog changes? They have not been saved as a revision.')
+}
+function navigate(next: 'index' | 'workbench' | 'new' | 'catalog') {
+  if (!guardUnsaved()) return
+  clearFeedback()
+  view.value = next
+  if (next === 'index') void loadIndex()
+}
+function hydrateCatalog() {
+  const latest = catalog.value
+  catalogBaseVersion.value = latest?.version ?? 0
+  catalogCurrency.value = latest?.currency ?? 'IDR'
+  rateRows.value = (latest?.services ?? []).map(x => ({
+    key:++rowKey,id:x.id,label:x.label,price:String(x.unitPriceMinor)
+  }))
+  catalogDirty.value = false
+}
+function markCatalogDirty() { catalogDirty.value = true; notice.value = '' }
+async function refreshCatalogs() {
+  if (!guardUnsaved()) return
+  clearFeedback()
+  catalogSaving.value = true
+  try {
+    catalogs.value = await api.catalogs()
+    hydrateCatalog()
+    notice.value = 'Loaded the latest published catalog version.'
+  } catch (cause) { showError(cause) }
+  finally { catalogSaving.value = false }
+}
+function addRate() {
+  rateRows.value.push({key:++rowKey,id:'',label:'',price:'0'})
+  markCatalogDirty()
+}
+async function saveCatalog() {
+  if (!canManageCatalog.value) return
+  clearFeedback()
+  const services = rateRows.value.map(x => ({id:x.id.trim(),label:x.label.trim(),unitPriceMinor:Number(x.price)}))
+  if (!services.length || services.length > 200 || new Set(services.map(x=>x.id)).size !== services.length ||
+      rateRows.value.some(x=>!x.price.trim() || !/^\d+$/.test(x.price.trim())) ||
+      services.some(x=>!x.id || !x.label || !Number.isSafeInteger(x.unitPriceMinor) || x.unitPriceMinor < 0) || !/^[A-Z]{3}$/.test(catalogCurrency.value)) {
+    error.value = 'Add 1–200 unique named services with nonnegative safe integer prices in minor units.'
+    return
+  }
+  catalogSaving.value = true
+  try {
+    await api.createCatalog({baseVersion:catalogBaseVersion.value,currency:catalogCurrency.value,services})
+    catalogs.value = await api.catalogs()
+    hydrateCatalog()
+    if (currentId.value && snapshot.value) await reload()
+    await loadIndex()
+    notice.value = 'New immutable catalog version published. Existing estimates must be recalculated and reviewed.'
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 403) ownerDenied.value = true
+    if (cause instanceof ApiError && cause.code === 'STALE_CATALOG_VERSION')
+      error.value = 'Another owner published rates. Your edits remain unsaved; reload latest before retrying.'
+    else showError(cause)
+  } finally { catalogSaving.value = false }
+}
+async function loadIndex(cursor: string | null = null, page = 0) {
+  if (!authenticated.value) return
+  listBusy.value = true
+  try {
+    const result = await api.listProjects({limit:10,cursor:cursor ?? undefined})
+    projectPage.value = result
+    pageNumber.value = page
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 401) authenticated.value = false
+    showError(cause)
+  } finally { listBusy.value = false }
+}
+async function nextPage() {
+  if (!projectPage.value?.nextCursor) return
+  const next = projectPage.value.nextCursor
+  await loadIndex(next,pageNumber.value+1)
+  if (!error.value) pageCursors.value[pageNumber.value] = next
+}
+async function previousPage() {
+  if (pageNumber.value === 0) return
+  await loadIndex(pageCursors.value[pageNumber.value-1],pageNumber.value-1)
+}
+async function loadWorkspace() {
+  catalogs.value = await api.catalogs()
+  hydrateCatalog()
+  pageCursors.value = [null]
+  pageNumber.value = 0
+  await loadIndex()
+}
+async function openExisting(id: string) {
+  if (!guardUnsaved()) return
+  await loadProject(id)
+}
+function confirmUnload(event: BeforeUnloadEvent) {
+  if (!draftDirty.value && !catalogDirty.value) return
+  event.preventDefault()
+}
+window.addEventListener('beforeunload', confirmUnload)
+onUnmounted(() => window.removeEventListener('beforeunload', confirmUnload))
+
 onMounted(async () => {
   try {
     if (!isDemo) {
@@ -306,7 +460,7 @@ onMounted(async () => {
       authenticated.value = isSignedIn()
       if (!authenticated.value) { loading.value = false; return }
     }
-    catalogs.value = await api.catalogs()
+    await loadWorkspace()
     if (isDemo) await loadProject(fixtureProjectId)
     else loading.value = false
   } catch (cause) { showError(cause); loading.value = false }
@@ -320,23 +474,30 @@ onMounted(async () => {
       <div class="brand"><div class="brand-mark" aria-hidden="true">S<span>·</span></div><div><strong>Scopehatch</strong><small>Operator workbench</small></div></div>
       <div class="sidebar-section">
         <p class="eyebrow">WORKSPACE</p>
-        <button class="nav-link" :class="{ selected: hasProject }" type="button" :disabled="busy" @click="view = 'workbench'">
-          <span aria-hidden="true">▤</span> Current project
-        </button>
-        <button class="nav-link" :class="{ selected: view === 'new' }" type="button" :disabled="busy" @click="view = 'new'; clearFeedback()">
-          <span aria-hidden="true">＋</span> New brief
-        </button>
+        <button class="nav-link" :class="{ selected: view === 'index' }" type="button" :disabled="busy || !authenticated" @click="navigate('index')"><span aria-hidden="true">▦</span> Projects</button>
+        <button class="nav-link" :class="{ selected: hasProject }" type="button" :disabled="busy || !snapshot" @click="navigate('workbench')"><span aria-hidden="true">▤</span> Current project</button>
+        <button class="nav-link" :class="{ selected: view === 'new' }" type="button" :disabled="busy || !authenticated" @click="navigate('new')"><span aria-hidden="true">＋</span> New brief</button>
+        <button class="nav-link" :class="{ selected: view === 'catalog' }" type="button" :disabled="busy || !authenticated" @click="navigate('catalog')"><span aria-hidden="true">◫</span> Rate catalog</button>
       </div>
       <div class="sidebar-section compact">
-        <p class="eyebrow">OPEN A PROJECT</p>
-        <form @submit.prevent="loadProject(projectIdInput.trim())">
-          <label class="sr-only" for="project-id">Project ID</label>
-          <div class="project-jump">
-            <input id="project-id" v-model="projectIdInput" autocomplete="off" placeholder="Project ID" required />
-            <button type="submit" aria-label="Open project by ID" :disabled="loading || busy">→</button>
-          </div>
-        </form>
-        <p class="side-help">Project lists are not part of Sprint 01's API. Open a known ID.</p>
+        <p class="eyebrow">RECENT PROJECTS</p>
+        <p v-if="!projectPage?.items.length" class="side-help">No projects loaded in this workspace.</p>
+        <button v-for="item in projectPage?.items.slice(0,4) ?? []" :key="item.id" type="button"
+          class="nav-link recent-project" :disabled="busy || loading" @click="openExisting(item.id)">
+          <span class="recent-title">{{ item.title }}</span><small>{{ item.status }}</small>
+        </button>
+      </div>
+      <div class="sidebar-section compact project-id-fallback">
+        <details open>
+          <summary>Open by project ID</summary>
+          <form class="project-jump-form" @submit.prevent="openExisting(projectIdInput.trim())">
+            <label for="project-id">Project ID</label>
+            <div class="project-jump">
+              <input id="project-id" v-model="projectIdInput" autocomplete="off" placeholder="Project ID" required />
+              <button type="submit" aria-label="Open project by ID" :disabled="loading || busy">→</button>
+            </div>
+          </form>
+        </details>
       </div>
       <div class="sidebar-bottom">
         <div class="mode-flag" :class="{ 'live-flag': !isDemo }"><span class="flag-dot"></span>{{ isDemo ? 'DEMO FIXTURE · LOCAL ONLY' : 'API MODE · AUTH REQUIRED' }}</div>
@@ -346,6 +507,7 @@ onMounted(async () => {
           <select id="persona" :value="persona" :disabled="busy" @change="changePersona(($event.target as HTMLSelectElement).value as FixturePersona)">
             <option value="operator">Morgan · Operator (fixture)</option>
             <option value="reviewer">Alex · Reviewer (fixture)</option>
+            <option value="owner">Taylor · Owner (fixture)</option>
           </select>
           <p class="side-help">Simulated roles, not signed-in users. The API never receives these identities.</p>
         </div>
@@ -355,7 +517,7 @@ onMounted(async () => {
 
     <div class="main-column">
       <header class="topbar">
-        <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><strong>{{ view === 'new' ? 'New intake' : snapshot?.project.title ?? 'Project' }}</strong></div>
+        <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><strong>{{ view === 'new' ? 'New intake' : view === 'index' ? 'Projects' : view === 'catalog' ? 'Catalog versions' : snapshot?.project.title ?? 'Project' }}</strong></div>
         <span class="top-meta">Brief → Scope → Review → Proposal</span>
       </header>
 
@@ -380,7 +542,55 @@ onMounted(async () => {
         </div>
         <div v-if="notice" class="alert notice-alert" role="status"><span aria-hidden="true">✓</span><p>{{ notice }}</p><button type="button" aria-label="Dismiss message" @click="notice = ''">×</button></div>
 
-        <section v-if="view === 'new'" class="intake-page" aria-labelledby="intake-heading">
+        <section v-if="view === 'index'" class="index-page" aria-labelledby="index-heading">
+          <div v-if="!catalog" class="inline-alert" role="status">This workspace has no published catalog yet. <button class="text-button" type="button" @click="navigate('catalog')">Open owner catalog setup →</button></div>
+          <div class="index-header">
+            <div><p class="overline">WORKSPACE / PROJECTS</p><h1 id="index-heading">Your studio's work.</h1><p class="lede">Reopen original briefs and see each project's current status.</p></div>
+            <button class="button primary" type="button" :disabled="!authenticated" @click="navigate('new')">New client brief →</button>
+          </div>
+          <p v-if="listBusy" role="status" class="blank-state">Loading projects…</p>
+          <div v-else-if="projectPage?.items.length" class="project-cards">
+            <button v-for="item in projectPage.items" :key="item.id" type="button" class="project-card" @click="openExisting(item.id)">
+              <span class="project-card-top"><strong>{{ item.title }}</strong><span class="index-status" :class="item.status">{{ item.status === 'draft' ? 'Needs estimate' : item.status === 'blocked' ? 'Blocked' : item.status === 'ready' ? 'Ready' : item.status === 'pending' ? 'Pending review' : 'Approved' }}</span></span>
+              <span class="project-card-meta">Created {{ new Date(item.createdAt).toLocaleDateString() }} · Open project →</span>
+            </button>
+          </div>
+          <div v-else class="empty-workspace"><h2>No projects in this workspace yet.</h2><p>Create one from an original brief. No IDs to copy or remember.</p><button class="button primary" type="button" :disabled="!authenticated" @click="navigate('new')">Create first project</button></div>
+          <nav class="pagination" aria-label="Project pages">
+            <button class="button secondary" type="button" :disabled="listBusy || pageNumber === 0" @click="previousPage">← Previous page</button><span>Page {{ pageNumber + 1 }}</span>
+            <button class="button secondary" type="button" :disabled="listBusy || !projectPage?.nextCursor" @click="nextPage">Next page →</button>
+          </nav>
+        </section>
+        <section v-else-if="view === 'catalog'" class="catalog-page" aria-labelledby="catalog-heading">
+          <p class="overline">STUDIO PRICING / OWNER CONTROLLED</p><h1 id="catalog-heading">Versioned rate catalog.</h1>
+          <p class="lede">Publishing replaces the entire service list as a new immutable version. Prices are integer minor units, never model-generated.</p>
+          <div class="surface-card">
+            <div class="panel-heading"><div><h2>Catalog v{{ catalog?.version ?? 0 }}</h2><p class="muted">{{ catalogs.length }} recorded version{{ catalogs.length === 1 ? '' : 's' }}</p></div>
+              <button class="button secondary" type="button" :disabled="catalogSaving" @click="refreshCatalogs">Reload published rates</button>
+            </div>
+            <p v-if="!catalog" class="inline-alert">No catalog exists yet. A verified owner must publish version one before a quote can be priced.</p>
+            <p v-if="ownerDenied" role="status" class="inline-alert">The API denied catalog publishing (403). Verified owner membership is required.</p>
+            <p v-if="isDemo && !canManageCatalog" class="inline-alert">Switch to Taylor · Owner (fixture) to test catalog publishing.</p>
+            <p v-else-if="!isDemo && canManageCatalog" class="muted">The server checks owner membership on publish; this editor is not proof of authorization.</p>
+            <form v-if="canManageCatalog" class="catalog-form" @submit.prevent="saveCatalog">
+              <div class="field"><label for="catalog-currency">ISO currency</label><input id="catalog-currency" v-model="catalogCurrency" maxlength="3" required @input="markCatalogDirty" /></div>
+              <div v-for="(rate,index) in rateRows" :key="rate.key" class="rate-editor">
+                <strong>Service {{ index+1 }}</strong>
+                <div class="field"><label :for="'rate-id-'+rate.key">Service ID</label><input :id="'rate-id-'+rate.key" v-model="rate.id" required @input="markCatalogDirty" /></div>
+                <div class="field"><label :for="'rate-label-'+rate.key">Service label</label><input :id="'rate-label-'+rate.key" v-model="rate.label" required @input="markCatalogDirty" /></div>
+                <div class="field"><label :for="'rate-price-'+rate.key">Unit price (minor units)</label><input :id="'rate-price-'+rate.key" v-model="rate.price" inputmode="numeric" pattern="[0-9]+" required @input="markCatalogDirty" /></div>
+                <button class="text-button danger" type="button" @click="rateRows = rateRows.filter(x => x.key !== rate.key); markCatalogDirty()">Remove</button>
+              </div>
+              <button class="button secondary" type="button" :disabled="rateRows.length >= 200" @click="addRate">＋ Add catalog service</button>
+              <p v-if="catalogDirty" class="dirty-note">Unsaved pricing changes. Previous versions cannot be edited.</p>
+              <button class="button primary" type="submit" :disabled="catalogSaving || !catalogDirty">{{ catalogSaving ? 'Publishing…' : 'Publish new catalog version →' }}</button>
+            </form>
+            <details v-if="catalogs.length" class="catalog-history"><summary>View published version history</summary>
+              <div v-for="version in catalogs" :key="version.version" class="catalog-history-row"><strong>Version {{ version.version }} · {{ version.currency }}</strong><p>{{ version.services.length }} services · read-only</p></div>
+            </details>
+          </div>
+        </section>
+        <section v-else-if="view === 'new'" class="intake-page" aria-labelledby="intake-heading">
           <p class="overline">01 / INTAKE</p>
           <h1 id="intake-heading">Begin with the client's words.</h1>
           <p class="lede">The original brief is preserved as evidence. You decide what the actual work includes.</p>
@@ -396,8 +606,8 @@ onMounted(async () => {
         <div v-else-if="loading" class="loading-view" role="status"><div class="spinner"></div><p>Loading the project and its revision history…</p></div>
         <section v-else-if="!snapshot" class="empty-workspace">
           <p class="overline">START HERE</p><h1>Every clear proposal starts with a messy brief.</h1>
-          <p>Create a project to record the request before estimating any work. Or open an existing project by ID.</p>
-          <button type="button" class="button primary" @click="view = 'new'">New client brief →</button>
+          <p>Create a project to record the request before estimating any work. Or browse the workspace project list.</p>
+          <button type="button" class="button primary" @click="navigate('new')">New client brief →</button>
         </section>
         <template v-else>
           <div class="workspace-intro">
@@ -465,12 +675,29 @@ onMounted(async () => {
                 <div class="field"><label :for="'evidence-' + line.key">{{ line.source === 'brief' ? 'Exact brief excerpt' : 'Reason for manual entry' }}</label>
                   <input :id="'evidence-' + line.key" v-model="line.evidence" :disabled="busy || !canEdit" :placeholder="line.source === 'brief' ? 'Copy the client’s exact words' : 'Explain the assumption or correction'" @focus="activeEvidence = line.source === 'brief' ? line.evidence : ''" @input="edit(); activeEvidence = line.source === 'brief' ? line.evidence : ''" />
                 </div>
+                <div class="field"><label :for="'description-' + line.key">Client-facing description</label>
+                  <textarea :id="'description-' + line.key" v-model="line.clientDescription" maxlength="2000" rows="2" :disabled="busy || !canEdit" placeholder="Describe this deliverable for the client" @input="edit" />
+                </div>
               </div>
               <button type="button" class="button secondary add-line" :disabled="busy || !canEdit || !catalog" @click="addLine">＋ Add deliverable</button>
               <div class="unknown-section"><div class="subheading"><h3>Open questions & assumptions</h3><span class="mini-tag">Each line blocks pricing</span></div>
                 <label for="unknowns">One unresolved requirement per line. Remove only after it has been clarified.</label>
                 <textarea id="unknowns" v-model="unknowns" rows="3" :disabled="busy || !canEdit" placeholder="e.g. Number of exterior angles must be confirmed" @input="edit" />
               </div>
+              <fieldset class="proposal-fields" :disabled="busy || !canEdit">
+                <legend>Client-facing proposal content</legend>
+                <p class="muted">Human-authored content belongs to this immutable scope revision. Text-only changes require fresh estimate and approval.</p>
+                <div class="field"><label for="proposal-overview">Overview</label><textarea id="proposal-overview" v-model="metadata.overview" maxlength="4000" rows="3" @input="edit" /></div>
+                <div class="field"><label for="proposal-assumptions">Assumptions (one per line)</label><textarea id="proposal-assumptions" v-model="assumptionsText" rows="3" @input="edit" /></div>
+                <div class="field"><label for="proposal-exclusions">Exclusions (one per line)</label><textarea id="proposal-exclusions" v-model="exclusionsText" rows="3" @input="edit" /></div>
+                <div class="field"><label for="proposal-terms">Commercial terms (one per line)</label><textarea id="proposal-terms" v-model="commercialTermsText" rows="3" @input="edit" /></div>
+                <details class="proposed-preview"><summary>Preview editable proposal text</summary>
+                  <p>{{ metadata.overview || 'No overview entered.' }}</p>
+                  <h4>Assumptions</h4><p v-for="(item,index) in parseLines(assumptionsText)" :key="'a'+index">{{ item }}</p>
+                  <h4>Exclusions</h4><p v-for="(item,index) in parseLines(exclusionsText)" :key="'e'+index">{{ item }}</p>
+                  <h4>Commercial terms</h4><p v-for="(item,index) in parseLines(commercialTermsText)" :key="'t'+index">{{ item }}</p>
+                </details>
+              </fieldset>
               <div class="scope-actions">
                 <p v-if="draftDirty" class="dirty-note">● Unsaved changes — any approval would not apply to them.</p>
                 <button class="button primary" type="button" :disabled="busy || !canEdit || !catalog || localInvalid || (!draftDirty && Boolean(scope))" @click="saveScope">

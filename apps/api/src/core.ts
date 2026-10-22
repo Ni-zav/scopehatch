@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { AuditEvent, Catalog, Deliverable, Estimate, HttpResult, PersistencePort, Principal, Project, Review, Scope, UnitOfWork } from './ports.ts';
+import type { AuditEvent, Catalog, Deliverable, Estimate, HttpResult, PersistencePort, Principal, Project, Review, Scope, UnitOfWork, ProposalMetadata } from './ports.ts';
+import { normalizeScope, normalizeProposal, validateProposal, renderProposalMarkdown } from './proposal.ts';
 // Root JS domain kernel is frozen by another owner and has no TS declaration file.
 // @ts-expect-error External .mjs boundary; model typing is enforced by local port types.
 import { createScopeRevision, estimateScope, submitReview, approveReview, exportProposal } from '../../../src/domain.mjs';
@@ -69,6 +70,35 @@ export class ApplicationService {
     });
   }
   catalogs(principal: Principal) { return this.read(principal, async tx => ({ items: await tx.listCatalogs() })); }
+  createCatalog(principal: Principal, key: string, data: {baseVersion:number;currency:string;services:{id:string;label:string;unitPriceMinor:number}[]}, requestId:string):Promise<HttpResult> {
+    requireRole(principal, 'owner');
+    if(!Number.isSafeInteger(data.baseVersion)||data.baseVersion<0||!(/^[A-Z]{3}$/.test(data.currency))||
+      !Intl.supportedValuesOf('currency').includes(data.currency))
+      fail('INVALID_INPUT',422,'Invalid catalog version or ISO currency');
+    if(!Array.isArray(data.services)||data.services.length<1||data.services.length>200)
+      fail('INVALID_INPUT',422,'Catalog requires 1 to 200 services');
+    const seen=new Set<string>();
+    for(const entry of data.services) {
+      if(!entry.id.trim()||!entry.label.trim())fail('INVALID_INPUT',422,'Service ID and label are required');
+      if(seen.has(entry.id.trim()))fail('DUPLICATE_SERVICE',422,'Duplicate service ID');
+      seen.add(entry.id.trim());
+      if(!Number.isSafeInteger(entry.unitPriceMinor)||entry.unitPriceMinor<0)fail('MONEY_OVERFLOW',422,'Invalid rate');
+    }
+    return this.write(principal,'POST','/v1/catalogs',key,data,async tx=>{
+      if(!tx.createCatalogVersion)fail('DEPENDENCY_UNAVAILABLE',503,'Catalog persistence adapter unavailable');
+      const catalog=await tx.createCatalogVersion!({baseVersion:data.baseVersion,currency:data.currency,services:data.services});
+      // Persistence owns catalog audit in the same tenant-serialized transaction.
+      return {status:201,body:{catalog}};
+    });
+  }
+  listProjects(principal:Principal, cursor:string|undefined, limit:number) {
+    if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail('INVALID_INPUT',422,'Invalid project page size');
+    if(cursor!==undefined&&!/^[A-Za-z0-9_-]{1,512}$/.test(cursor))fail('INVALID_CURSOR',422,'Invalid project cursor');
+    return this.read(principal,async tx=>{
+      if(!tx.listProjects)fail('DEPENDENCY_UNAVAILABLE',503,'Project index adapter unavailable');
+      return tx.listProjects!({limit,cursor});
+    });
+  }
   project(principal: Principal, id: string) {
     return this.read(principal, async tx => {
       const project = requireProject(await tx.getProject(id));
@@ -77,7 +107,7 @@ export class ApplicationService {
       const latestEstimate = latestScope && catalogs[0] ? await tx.getEstimate(id, latestScope.revision, catalogs[0].version) : null;
       const currentReview = latestScope && catalogs[0] ? await tx.getReview(id, latestScope.revision, catalogs[0].version) : null;
       const review = currentReview ?? await tx.getLatestReview?.(id) ?? null;
-      return { project, ...(latestScope && { latestScope }), ...(latestEstimate && { latestEstimate }), ...(review && { review }) };
+      return { project, ...(latestScope && { latestScope: normalizeScope(latestScope) }), ...(latestEstimate && { latestEstimate }), ...(review && { review }) };
     });
   }
   createProject(principal: Principal, key: string, data: { title: string; brief: string }, requestId: string): Promise<HttpResult> {
@@ -91,18 +121,24 @@ export class ApplicationService {
       return { status: 201, body: { project: { id: project.id, title: project.title, brief: project.brief, status: project.status } } };
     });
   }
-  createScope(principal: Principal, id: string, key: string, data: { deliverables: Deliverable[]; unknowns: string[] }, requestId: string): Promise<HttpResult> {
+  createScope(principal: Principal, id: string, key: string, data: { deliverables: Deliverable[]; unknowns: string[]; proposal?:ProposalMetadata }, requestId: string): Promise<HttpResult> {
     requireRole(principal, 'owner', 'operator');
     return this.write(principal, 'POST', '/v1/projects/' + id + '/scopes', key, data, async tx => {
       const project = requireProject(await tx.getProject(id));
+      validateProposal(data.proposal,data.deliverables);
       const prior = await tx.getLatestScope(id);
       for (const d of data.deliverables) {
         if (d.source === 'brief' && (!d.evidence.trim() || !project.brief.includes(d.evidence)))
           fail('EVIDENCE_NOT_IN_BRIEF', 422, 'Brief evidence must quote the source text exactly');
       }
-      const scope: Scope = createScopeRevision({ tenantId: principal.tenantId, projectId: id,
+      // The frozen Sprint 01 kernel validates evidence and quantities, but knows no proposal fields.
+      // These additional fields belong to exactly this immutable scope revision.
+      const checked: Scope = createScopeRevision({ tenantId: principal.tenantId, projectId: id,
         authorId: principal.id, revision: (prior?.revision ?? 0) + 1, brief: project.brief,
         deliverables: data.deliverables, unknowns: data.unknowns });
+      const scope=normalizeScope({...checked,deliverables:checked.deliverables.map((d,i)=>({
+        ...d,clientDescription:data.deliverables[i]?.clientDescription??''
+      })),proposal:normalizeProposal(data.proposal)});
       await tx.insertScope(scope);
       await audit(tx, principal, id, requestId, 'scope.created', scope.revision);
       return { status: 201, body: { scope } };
@@ -158,7 +194,8 @@ export class ApplicationService {
       const catalog = latestOrConflict((await tx.listCatalogs())[0] ?? null, 'catalog');
       const estimate = requireBoundEstimate(await tx.getEstimate(id, revision, catalog.version));
       const review = await tx.getReview(id, revision, catalog.version);
-      return exportProposal({ scope, estimate, review });
+      const approved=exportProposal({ scope, estimate, review });
+      return {...approved,proposal:normalizeProposal(scope.proposal),markdown:approved.markdown+renderProposalMarkdown(scope)};
     });
   }
   audit(principal: Principal, id: string, cursor: string | undefined, limit: number) {
@@ -192,6 +229,7 @@ export function normalizeError(error: unknown): ApiError {
     const statuses: Record<string, number> = {
       INVALID_INPUT: 422, DUPLICATE_SERVICE: 422, MONEY_OVERFLOW: 422,
       STALE_ESTIMATE: 409, STALE_REVIEW: 409, STALE_REVISION: 409,
+      STALE_CATALOG_VERSION:409, INVALID_CURSOR:422, DEPENDENCY_UNAVAILABLE:503,
       CONFLICT: 409, IDEMPOTENCY_CONFLICT: 409, ALREADY_EXISTS: 409,
       NOT_FOUND: 404, EVIDENCE_NOT_IN_BRIEF: 422,
       BUDGET_NOT_CONFIGURED: 503, NO_ELIGIBLE_PROVIDER: 503,

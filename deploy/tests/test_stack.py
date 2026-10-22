@@ -1,6 +1,9 @@
 """Static deployment invariant tests. Requires PyYAML, no Docker daemon."""
 from pathlib import Path
 import unittest
+import shutil
+import subprocess
+import os
 import yaml
 
 DEPLOY = Path(__file__).resolve().parents[1]
@@ -86,6 +89,58 @@ class DeploymentContract(unittest.TestCase):
             self.assertIn("provider_api_key", self.external["services"][role]["secrets"])
             self.assertNotIn("postgres_password", self.external["services"][role]["secrets"])
             self.assertIn("postgres_runtime_password", self.external["services"][role]["secrets"])
+
+
+    def test_recovery_scripts_are_isolated_and_wired_to_real_integrity_checks(self):
+        script = (DEPLOY / "scripts/rehearse-recovery.sh").read_text()
+        upgrade = (DEPLOY / "scripts/verify-upgrade.sh").read_text()
+        sql = (DEPLOY / "tests/recovery-integrity.sql").read_text()
+        self.assertIn("--network none", script)
+        self.assertIn("--rm --network none", script)
+        self.assertIn("pg_dump", script)
+        self.assertIn("pg_restore --list", script)
+        self.assertIn("--exit-on-error", script)
+        self.assertIn("fingerprints", script)
+        self.assertIn('migrate "$target_id"', script)
+        self.assertIn("trap cleanup EXIT", script)
+        self.assertNotIn("docker volume rm", script)
+        self.assertNotIn("docker compose down", script)
+        for relation in ("scope_revisions", "reviews", "inference_reservations",
+                         "idempotency_records", "audit_events", "catalog_versions"):
+            self.assertIn(relation, sql)
+        self.assertIn("SET LOCAL ROLE scopehatch_rehearsal_runtime", sql)
+        self.assertIn("preflight.sh prod", upgrade)
+        self.assertIn("exited:0", upgrade)
+        self.assertNotIn("docker compose down", upgrade)
+
+    def test_backup_runbook_preserves_acl_grants(self):
+        runbook = (DEPLOY.parent / "docs/operations/backup-and-restore.md").read_text()
+        self.assertIn("--no-owner", runbook)
+        self.assertNotIn("--no-owner --no-acl", runbook)
+        self.assertIn("recovery-rehearsal.md", runbook)
+
+
+    def test_node_recovery_contracts_when_node_is_installed(self):
+        if not shutil.which("node"):
+            self.skipTest("Node not available; run node --test deploy/tests/recovery.test.mjs separately")
+        result = subprocess.run(
+            ["node", "--test", "deploy/tests/recovery.test.mjs"],
+            cwd=DEPLOY.parent, capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+    def test_live_disposable_recovery_on_ci_or_opt_in(self):
+        if os.environ.get("GITHUB_ACTIONS") != "true" and os.environ.get("RUN_SCOPEHATCH_DOCKER_RECOVERY") != "1":
+            self.skipTest("Full Docker restore requires GitHub Actions or explicit opt-in")
+        if not shutil.which("docker"):
+            self.fail("Docker is required for the release recovery gate on CI")
+        result = subprocess.run(
+            ["sh", "deploy/scripts/rehearse-recovery.sh"],
+            cwd=DEPLOY.parent, capture_output=True, text=True, timeout=240
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: source and restored dataset", result.stdout)
 
 if __name__ == "__main__":
     unittest.main()

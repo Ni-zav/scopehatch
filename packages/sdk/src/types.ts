@@ -1,14 +1,26 @@
-/** Public JSON shapes in contracts/sprint-01-interface.md (design contract). */
+/** Wire shapes from Sprint 01 plus additive frozen Sprint 02 API contract. */
 export type Source = 'brief' | 'manual';
 export type Evidence = string; // Current domain kernel stores brief citations as strings.
 
 export interface Service { id: string; label: string; unitPriceMinor: number }
 export interface Catalog { tenantId: string; currency: string; version: number; services: Service[] }
-export interface Project { id: string; title: string; brief: string; status: 'draft' }
-export interface Deliverable { serviceId: string; quantity: number | null; evidence: Evidence; source: Source }
+export type ProjectStatus = 'draft' | 'blocked' | 'ready' | 'pending' | 'approved';
+export interface Project { id: string; title: string; brief: string; status: ProjectStatus; tenantId?: string }
+export interface ProjectSummary { id: string; title: string; status: ProjectStatus; createdAt: string }
+export interface ProjectPage { items: ProjectSummary[]; nextCursor: string | null }
+export interface ProposalMetadata {
+  overview: string; assumptions: string[]; exclusions: string[]; commercialTerms: string[];
+}
+export interface Deliverable {
+  serviceId: string; quantity: number | null; evidence: Evidence; source: Source;
+  /** Human-authored, revision-bound description; missing on legacy requests. */
+  clientDescription?: string;
+}
 export interface Scope {
   tenantId: string; projectId: string; revision: number; authorId: string;
   brief: string; deliverables: Deliverable[]; unknowns: string[];
+  /** Normalized by Sprint 02 servers; optional for legacy server responses. */
+  proposal?: ProposalMetadata;
 }
 export interface EstimateLine {
   serviceId: string; quantity: number | null; unitPriceMinor: number | null;
@@ -26,13 +38,18 @@ export interface Review {
 }
 export interface ExportedProposal {
   projectId: string; revision: number; currency: string; totalMinor: number; markdown: string;
+  /** Snapshot of the exact approved scope revision; optional in old exports. */
+  proposal?: ProposalMetadata;
 }
 /** Audit event structure is not frozen beyond existence of a paginated event list. */
 export type AuditEvent = Record<string, unknown>;
 export interface AuditPage { items: AuditEvent[]; nextCursor: string | null }
 
 export interface CreateProjectRequest { title: string; brief: string }
-export interface CreateScopeRequest { deliverables: Deliverable[]; unknowns: string[] }
+export interface CreateCatalogRequest { baseVersion: number; currency: string; services: Service[] }
+export interface CreateScopeRequest {
+  deliverables: Deliverable[]; unknowns: string[]; proposal?: ProposalMetadata;
+}
 export interface RevisionBinding { scopeRevision: number; catalogVersion: number }
 export interface SuggestionRequest { scopeRevision?: number }
 /** Suggestions are untrusted drafts, never authoritative prices or approval decisions. */
@@ -44,6 +61,7 @@ export interface ProjectDetails {
 export interface RequestOptions { signal?: AbortSignal; timeoutMs?: number }
 export interface WriteOptions extends RequestOptions { idempotencyKey: string; retry?: boolean }
 export interface AuditOptions extends RequestOptions { cursor?: string; limit?: number }
+export interface ListProjectsOptions extends RequestOptions { cursor?: string; limit?: number }
 export interface CredentialProvider {
   getAccessToken(signal?: AbortSignal): string | Promise<string>;
 }

@@ -6,7 +6,7 @@
  *
  * Never connect using the migration owner, a superuser, or a BYPASSRLS role.
  */
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   createCatalog as validateCatalog,
   createScopeRevision as validateScope,
@@ -49,6 +49,137 @@ function canonical(value) {
 }
 const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
 
+
+const EMPTY_PROPOSAL = Object.freeze({
+  overview: '', assumptions: [], exclusions: [], commercialTerms: []
+});
+const PROPOSAL_FIELDS = ['overview', 'assumptions', 'exclusions', 'commercialTerms'];
+const CURSOR_SECRET = Buffer.from(process.env.SCOPEHATCH_CURSOR_SECRET || randomBytes(32).toString('hex'));
+const CURSOR_TTL_MS = 24 * 60 * 60 * 1000;
+function normalizeProposal(raw) {
+  if (raw === undefined) return { overview: '', assumptions: [], exclusions: [], commercialTerms: [] };
+  object(raw, 'proposal');
+  if (Object.keys(raw).length !== 4 ||
+      Object.keys(raw).some(k => !PROPOSAL_FIELDS.includes(k)))
+    reject('INVALID_INPUT', 'proposal fields must match contract');
+  if (typeof raw.overview !== 'string' || [...raw.overview].length > 4000)
+    reject('INVALID_INPUT', 'invalid proposal overview');
+  const result = { overview: raw.overview };
+  for (const key of PROPOSAL_FIELDS.slice(1)) {
+    if (!Array.isArray(raw[key]) || raw[key].length > 50 ||
+        raw[key].some(x => typeof x !== 'string' || !x.trim() || [...x.trim()].length > 2000))
+      reject('INVALID_INPUT', 'invalid proposal ' + key);
+    result[key] = [...raw[key]];
+  }
+  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > 65536)
+    reject('INVALID_INPUT', 'proposal metadata too large');
+  return result;
+}
+function normalizeDescriptions(deliverables, proposal) {
+  const rows = deliverables.map(line => {
+    object(line, 'deliverable');
+    if (Object.keys(line).some(k => !['serviceId','quantity','evidence','source','clientDescription'].includes(k)))
+      reject('INVALID_INPUT', 'unknown deliverable property');
+    const description = line.clientDescription ?? '';
+    if (typeof description !== 'string' || [...description].length > 2000)
+      reject('INVALID_INPUT', 'invalid clientDescription');
+    return description;
+  });
+  if (Buffer.byteLength(JSON.stringify({ proposal, clientDescriptions: rows }), 'utf8') > 65536)
+    reject('INVALID_INPUT', 'combined proposal metadata too large');
+  return rows;
+}
+function md(value) {
+  return String(value).replace(/[\\\x60*_{}\[\]()#+.!|<>~>]/g, ch => '\\' + ch)
+    .replace(/(^|\n)([ \t]*)-(?=\s)/g, (_, start, spaces) => start + spaces + '\\-')
+    .replace(/\r?\n/g, '  \n');
+}
+function proposalMarkdown(scope, estimate, review) {
+  const p = scope.proposal ?? EMPTY_PROPOSAL;
+  const lines = ['# Proposal draft — ' + md(scope.projectId), ''];
+  if (p.overview) lines.push('## Overview', '', md(p.overview), '');
+  lines.push('## Deliverables', '');
+  estimate.lines.forEach((line, index) => {
+    const description = scope.deliverables[index]?.clientDescription ?? '';
+    lines.push('- ' + md(line.serviceId) + ': ' + line.quantity + ' x ' +
+      line.unitPriceMinor + ' = ' + line.subtotalMinor +
+      (description ? ' — ' + md(description) : ''));
+  });
+  lines.push('', 'Total: ' + estimate.totalMinor + ' ' + md(estimate.currency) + ' minor units', '');
+  for (const [key, heading] of [
+    ['assumptions','Assumptions'], ['exclusions','Exclusions'],
+    ['commercialTerms','Commercial terms']
+  ]) if (p[key].length) {
+    lines.push('## ' + heading, '');
+    for (const entry of p[key]) lines.push('- ' + md(entry));
+    lines.push('');
+  }
+  lines.push('Approved by: ' + md(review.approvedBy), '');
+  return lines.join('\n');
+}
+function cursorMac(encoded) {
+  return createHmac('sha256', CURSOR_SECRET).update(encoded).digest('base64url');
+}
+function makeProjectCursor(tenantId, row) {
+  const payload = { v: 1, t: digest(tenantId), d: new Date(row.created_at).toISOString(),
+    i: row.id, x: Date.now() + CURSOR_TTL_MS };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return 'p1.' + encoded + '.' + cursorMac(encoded);
+}
+function readProjectCursor(tenantId, cursor) {
+  if (typeof cursor !== 'string' || cursor.length > 512 ||
+      !/^p1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(cursor))
+    reject('INVALID_CURSOR', 'invalid project cursor');
+  const [, encoded, mac] = cursor.split('.');
+  const expected = Buffer.from(cursorMac(encoded));
+  const supplied = Buffer.from(mac);
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied))
+    reject('INVALID_CURSOR', 'invalid project cursor');
+  let value;
+  try { value = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')); }
+  catch { reject('INVALID_CURSOR', 'invalid project cursor'); }
+  if (value?.v !== 1 || value.t !== digest(tenantId) ||
+      typeof value.i !== 'string' || !value.i || typeof value.d !== 'string' ||
+      !Number.isFinite(Date.parse(value.d)) || !Number.isSafeInteger(value.x) ||
+      value.x < Date.now() || value.x > Date.now() + CURSOR_TTL_MS)
+    reject('INVALID_CURSOR', 'expired or foreign project cursor');
+  return { id: value.i, date: value.d };
+}
+// Shared read-model join: a catalog or scope edit invalidates old current approval.
+const PROJECT_READ_MODEL = `
+  FROM scopehatch.projects p
+  LEFT JOIN LATERAL (
+    SELECT revision,brief FROM scopehatch.intakes
+    WHERE tenant_id=p.tenant_id AND project_id=p.id
+    ORDER BY revision DESC LIMIT 1
+  ) i ON true
+  LEFT JOIN LATERAL (
+    SELECT revision,intake_revision FROM scopehatch.scope_revisions
+    WHERE tenant_id=p.tenant_id AND project_id=p.id
+    ORDER BY revision DESC LIMIT 1
+  ) s ON true
+  LEFT JOIN LATERAL (
+    SELECT version FROM scopehatch.catalog_versions
+    WHERE tenant_id=p.tenant_id ORDER BY version DESC LIMIT 1
+  ) c ON true
+  LEFT JOIN LATERAL (
+    SELECT revision,scope_revision,catalog_version,state FROM scopehatch.estimate_revisions
+    WHERE tenant_id=p.tenant_id AND project_id=p.id
+    ORDER BY revision DESC LIMIT 1
+  ) e ON true
+  LEFT JOIN scopehatch.reviews r
+    ON r.tenant_id=p.tenant_id AND r.project_id=p.id
+   AND r.estimate_revision=e.revision
+`;
+const PROJECT_STATUS = `CASE
+    WHEN s.revision IS NULL OR s.intake_revision IS DISTINCT FROM i.revision
+       OR e.revision IS NULL OR e.scope_revision IS DISTINCT FROM s.revision
+       OR e.catalog_version IS DISTINCT FROM c.version THEN 'draft'
+    WHEN e.state='blocked' THEN 'blocked'
+    WHEN r.state='approved' THEN 'approved'
+    WHEN r.state='pending' THEN 'pending'
+    ELSE 'ready' END`;
+
 function presentCatalog(header, rows) {
   return {
     tenantId: header.tenant_id, currency: header.currency, version: header.version,
@@ -61,9 +192,9 @@ function presentScope(scope, intake, lines) {
     authorId: scope.author_id, brief: intake.brief,
     deliverables: lines.map(l => ({
       serviceId: l.service_id, quantity: l.quantity === null ? null : minor(l.quantity),
-      evidence: l.evidence, source: l.source
+      evidence: l.evidence, source: l.source, clientDescription: l.client_description ?? ''
     })),
-    unknowns: scope.unknowns
+    unknowns: scope.unknowns, proposal: scope.proposal ?? normalizeProposal()
   };
 }
 function presentEstimate(row) {
@@ -127,32 +258,40 @@ export function createPersistence(pool) {
         return r.rows[0];
       }
       async function getProject(projectId) {
-        const project = await projectRow(projectId);
-        const intake = await latestIntake(projectId);
-        const scope = await q(
-          'SELECT revision,intake_revision FROM scopehatch.scope_revisions WHERE tenant_id=$1 AND project_id=$2 ORDER BY revision DESC LIMIT 1',
-          [tenant, projectId]
+        const r = await q(
+          'SELECT p.id,p.title,i.brief,' + PROJECT_STATUS + ' AS status ' +
+          PROJECT_READ_MODEL + ' WHERE p.tenant_id=$1 AND p.id=$2',
+          [tenant, string(projectId, 'projectId')]
         );
-        const estimate = await q(
-          'SELECT revision,scope_revision,catalog_version,state FROM scopehatch.estimate_revisions WHERE tenant_id=$1 AND project_id=$2 ORDER BY revision DESC LIMIT 1',
-          [tenant, projectId]
-        );
-        const catalog = await q('SELECT max(version) AS version FROM scopehatch.catalog_versions WHERE tenant_id=$1', [tenant]);
-        let status = 'draft';
-        const scopeRow = scope.rows[0], estimateRow = estimate.rows[0];
-        if (scopeRow && scopeRow.intake_revision === intake.revision && estimateRow &&
-            estimateRow.scope_revision === scopeRow.revision &&
-            estimateRow.catalog_version === catalog.rows[0].version) {
-          status = estimateRow.state;
-          if (status === 'ready') {
-            const review = await q(
-              'SELECT state FROM scopehatch.reviews WHERE tenant_id=$1 AND project_id=$2 AND estimate_revision=$3',
-              [tenant, projectId, estimateRow.revision]
-            );
-            status = review.rows[0]?.state ?? 'ready';
-          }
+        if (!r.rowCount) reject('NOT_FOUND', 'project not found');
+        return r.rows[0];
+      }
+      async function listProjects({ limit = 20, cursor } = {}) {
+        integer(limit, 'limit', 1);
+        if (limit > 100) reject('INVALID_INPUT', 'limit maximum 100');
+        const cutoff = cursor === undefined ? null : readProjectCursor(tenant, cursor);
+        const args = [tenant];
+        let where = ' WHERE p.tenant_id=$1';
+        if (cutoff) {
+          args.push(cutoff.date, cutoff.id);
+          where += ' AND (p.created_at,p.id) < ($2::timestamptz,$3::text)';
         }
-        return { id: project.id, title: project.title, brief: intake.brief, status };
+        args.push(limit + 1);
+        const r = await q(
+          'SELECT p.id,p.title,p.created_at,' + PROJECT_STATUS + ' AS status ' +
+          PROJECT_READ_MODEL + where +
+          ' ORDER BY p.created_at DESC,p.id DESC LIMIT $' + args.length,
+          args
+        );
+        const hasMore = r.rows.length > limit;
+        const rows = r.rows.slice(0, limit);
+        return {
+          items: rows.map(x => ({
+            id: x.id, title: x.title, status: x.status,
+            createdAt: new Date(x.created_at).toISOString()
+          })),
+          nextCursor: hasMore ? makeProjectCursor(tenant, rows.at(-1)) : null
+        };
       }
       async function listReviews(projectId) {
         await projectRow(projectId);
@@ -182,7 +321,15 @@ export function createPersistence(pool) {
           [tenant, projectId, estimate.revision]
         );
         if (!reviewed.rowCount) reject('APPROVAL_REQUIRED', 'exact quote is not approved');
-        return exportProposal({ scope, estimate, review: presentReview(reviewed.rows[0]) });
+        const review = presentReview(reviewed.rows[0]);
+        // Kernel remains the quote/approval authority; rich text never affects price.
+        exportProposal({ scope, estimate, review });
+        return {
+          projectId: scope.projectId, revision: scope.revision,
+          currency: estimate.currency, totalMinor: estimate.totalMinor,
+          markdown: proposalMarkdown(scope, estimate, review),
+          proposal: scope.proposal
+        };
       }
       async function latestIntake(projectId) {
         const r = await q(
@@ -284,27 +431,46 @@ export function createPersistence(pool) {
         await audit('intake.created', projectId, revision, requestId);
         return { tenantId: tenant, projectId, revision, brief, authorId: ctx.actorId };
       }
-      async function createCatalog({ currency, services, requestId } = {}) {
-        requireRole(ctx, ['owner', 'operator']);
+      async function createCatalog({ baseVersion, currency, services, requestId } = {}) {
+        requireRole(ctx, ['owner']);
+        integer(baseVersion, 'baseVersion');
+        if (!Array.isArray(services) || services.length < 1 || services.length > 200)
+          reject('INVALID_INPUT', 'catalog requires 1..200 services');
+        if (typeof currency !== 'string' || !/^[A-Z]{3}$/.test(currency) ||
+            !Intl.supportedValuesOf('currency').includes(currency))
+          reject('INVALID_INPUT', 'unsupported currency');
+        for (const service of services) {
+          object(service, 'service');
+          if (Object.keys(service).some(k => !['id','label','unitPriceMinor'].includes(k)))
+            reject('INVALID_INPUT', 'unknown service property');
+        }
+        // Validation occurs before locking, but version selection never trusts the caller.
+        const catalog = validateCatalog({
+          tenantId: tenant, currency, version: baseVersion + 1, services
+        });
+        if (baseVersion >= 2147483647) reject('INVALID_INPUT', 'catalog version limit reached');
         await q('SELECT id FROM scopehatch.tenants WHERE id=$1 FOR UPDATE', [tenant]);
         const r = await q('SELECT coalesce(max(version),0)::int AS version FROM scopehatch.catalog_versions WHERE tenant_id=$1', [tenant]);
-        const version = r.rows[0].version + 1;
-        const catalog = validateCatalog({ tenantId: tenant, currency, version, services });
+        if (r.rows[0].version !== baseVersion)
+          reject('STALE_CATALOG_VERSION', 'latest catalog version changed');
         await q(
           'INSERT INTO scopehatch.catalog_versions(tenant_id,version,currency,created_by,service_count) VALUES($1,$2,$3,$4,$5)',
-          [tenant, version, currency, ctx.actorId, catalog.services.length]
+          [tenant, catalog.version, currency, ctx.actorId, catalog.services.length]
         );
-        for (const s of catalog.services)
+        for (const service of catalog.services)
           await q(
             'INSERT INTO scopehatch.catalog_services(tenant_id,catalog_version,service_id,label,unit_price_minor) VALUES($1,$2,$3,$4,$5)',
-            [tenant, version, s.id, s.label, s.unitPriceMinor]
+            [tenant, catalog.version, service.id, service.label, service.unitPriceMinor]
           );
-        await audit('catalog.created', null, version, requestId);
+        await audit('catalog.created', null, catalog.version, requestId);
         return catalog;
       }
-      async function createScope({ projectId, deliverables, unknowns = [], requestId } = {}) {
+      async function createScope({ projectId, deliverables, unknowns = [], proposal, requestId } = {}) {
         requireRole(ctx, ['owner', 'operator']);
-        // Lock order is the same in DB triggers: tenant first, project second.
+        if (!Array.isArray(deliverables)) reject('INVALID_INPUT', 'deliverables required');
+        const normalizedProposal = normalizeProposal(proposal);
+        const descriptions = normalizeDescriptions(deliverables, normalizedProposal);
+        // Locks are tenant then project for all metadata, quote and review writers.
         await q('SELECT id FROM scopehatch.tenants WHERE id=$1 FOR UPDATE', [tenant]);
         await projectRow(projectId, true);
         const intake = await latestIntake(projectId);
@@ -313,19 +479,28 @@ export function createPersistence(pool) {
           [tenant, projectId]
         );
         const revision = rev.rows[0].revision + 1;
-        const scope = validateScope({
+        const core = validateScope({
           tenantId: tenant, projectId, revision, authorId: ctx.actorId,
           brief: intake.brief, deliverables, unknowns
         });
+        const scope = {
+          ...core, proposal: normalizedProposal,
+          deliverables: core.deliverables.map((line, index) => ({
+            ...line, clientDescription: descriptions[index]
+          }))
+        };
         await q(
-          'INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)',
-          [tenant, projectId, revision, intake.revision, ctx.actorId, JSON.stringify(scope.unknowns), scope.deliverables.length]
+          'INSERT INTO scopehatch.scope_revisions(tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count,proposal) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb)',
+          [tenant, projectId, revision, intake.revision, ctx.actorId,
+            JSON.stringify(scope.unknowns), scope.deliverables.length,
+            JSON.stringify(normalizedProposal)]
         );
-        for (const [index, d] of scope.deliverables.entries())
+        for (const [index, line] of scope.deliverables.entries())
           await q(
-            'INSERT INTO scopehatch.scope_deliverables(tenant_id,project_id,scope_revision,line_no,service_id,quantity,evidence,source) ' +
-            'VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-            [tenant, projectId, revision, index, d.serviceId, d.quantity, d.evidence, d.source]
+            'INSERT INTO scopehatch.scope_deliverables(tenant_id,project_id,scope_revision,line_no,service_id,quantity,evidence,source,client_description) ' +
+            'VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+            [tenant, projectId, revision, index, line.serviceId, line.quantity,
+              line.evidence, line.source, line.clientDescription]
           );
         await audit('scope.created', projectId, revision, requestId);
         return scope;
@@ -495,7 +670,7 @@ export function createPersistence(pool) {
         return { replayed: false, result };
       }
       const repository = Object.freeze({
-        context: ctx, getProject, createProject, createIntake, createCatalog, getCatalog,
+        context: ctx, getProject, listProjects, createProject, createIntake, createCatalog, getCatalog,
         listCatalogs, createScope, getScope, createEstimate, getEstimate,
         submitReview, getReview, listReviews, approveReview, exportApproved,
         listAudit, recordUsage, listUsage, idempotent
