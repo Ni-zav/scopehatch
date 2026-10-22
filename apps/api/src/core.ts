@@ -87,7 +87,7 @@ export class ApplicationService {
     return this.write(principal,'POST','/v1/catalogs',key,data,async tx=>{
       if(!tx.createCatalogVersion)fail('DEPENDENCY_UNAVAILABLE',503,'Catalog persistence adapter unavailable');
       const catalog=await tx.createCatalogVersion!({baseVersion:data.baseVersion,currency:data.currency,services:data.services});
-      await audit(tx,principal,'',requestId,'catalog.created',null);
+      // Persistence owns catalog audit in the same tenant-serialized transaction.
       return {status:201,body:{catalog}};
     });
   }
