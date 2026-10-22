@@ -115,4 +115,5 @@ CREATE POLICY catalog_create ON scopehatch.catalog_services FOR INSERT TO scopeh
   WITH CHECK (scopehatch.has_role(tenant_id,ARRAY['owner']));
 
 REVOKE ALL ON FUNCTION scopehatch.valid_proposal_metadata(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION scopehatch.valid_proposal_metadata(jsonb) TO scopehatch_app;
 COMMIT;
