@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, createHttpApi } from './api'
 import { beginSignIn, finishSignIn, getAccessToken, isSignedIn, oidcConfigured, signOut } from './oidc'
 import { DemoApi, fixtureProjectId, type FixturePersona } from './demo'
-import type { AuditEvent, Catalog, Deliverable, ProposalExport, ScopehatchApi, Snapshot, SuggestionResponse } from './types'
+import type { AuditEvent, Catalog, Deliverable, ProjectPage, ProposalMetadata, ProposalExport, ScopehatchApi, Snapshot, SuggestionResponse } from './types'
 
-type EditableLine = { key: number; serviceId: string; quantity: string; evidence: string; source: 'brief' | 'manual' }
+type EditableLine = { key: number; serviceId: string; quantity: string; evidence: string; source: 'brief' | 'manual'; clientDescription: string }
+type RateLine = { key: number; id: string; label: string; price: string }
 const isDemo = import.meta.env.VITE_SCOPEHATCH_DEMO === 'true'
 const fixture = isDemo ? new DemoApi() : null
 // Production has no implicit session, hardcoded bearer token, tenant header or role override.
@@ -19,8 +20,22 @@ const api: ScopehatchApi = fixture ?? createHttpApi({
 const authenticated = ref(isDemo || isSignedIn())
 const oidcReady = isDemo || oidcConfigured()
 const persona = ref<FixturePersona>('operator')
-const view = ref<'workbench' | 'new'>('workbench')
+const view = ref<'index' | 'workbench' | 'new' | 'catalog'>('index')
 const projectIdInput = ref('')
+const projectPage = ref<ProjectPage | null>(null)
+const pageCursors = ref<(string | null)[]>([null])
+const pageNumber = ref(0)
+const listBusy = ref(false)
+const rateRows = ref<RateLine[]>([])
+const catalogBaseVersion = ref(0)
+const catalogCurrency = ref('IDR')
+const catalogDirty = ref(false)
+const catalogSaving = ref(false)
+const ownerDenied = ref(false)
+const metadata = ref<ProposalMetadata>({overview:'',assumptions:[],exclusions:[],commercialTerms:[]})
+const assumptionsText = ref('')
+const exclusionsText = ref('')
+const commercialTermsText = ref('')
 const currentId = ref('')
 const catalogs = ref<Catalog[]>([])
 const snapshot = ref<Snapshot | null>(null)
@@ -59,7 +74,8 @@ const approved = computed(() => reviewCurrent.value && review.value?.state === '
   estimate.value?.state === 'ready' && !draftDirty.value)
 const pending = computed(() => reviewCurrent.value && review.value?.state === 'pending')
 const blocked = computed(() => estimate.value?.state === 'blocked')
-const canEdit = computed(() => isDemo ? persona.value === 'operator' : authenticated.value)
+const canEdit = computed(() => isDemo ? persona.value === 'operator' || persona.value === 'owner' : authenticated.value)
+const canManageCatalog = computed(() => authenticated.value && !ownerDenied.value && (!isDemo || persona.value === 'owner'))
 const hasProject = computed(() => view.value === 'workbench' && Boolean(snapshot.value))
 const localInvalid = computed(() => lines.value.some(l => {
   const q = String(l.quantity ?? '').trim()
@@ -100,14 +116,18 @@ function edit() { draftDirty.value = true; proposal.value = null; notice.value =
 function hydrateDraft() {
   lines.value = (scope.value?.deliverables ?? []).map(item => ({
     key: ++rowKey, serviceId: item.serviceId, quantity: item.quantity === null ? '' : String(item.quantity),
-    evidence: item.evidence, source: item.source
+    evidence: item.evidence, source: item.source, clientDescription: item.clientDescription ?? ''
   }))
   unknowns.value = scope.value?.unknowns.join('\n') ?? ''
+  metadata.value = structuredClone(scope.value?.proposal ?? {overview:'',assumptions:[],exclusions:[],commercialTerms:[]})
+  assumptionsText.value = metadata.value.assumptions.join('\n')
+  exclusionsText.value = metadata.value.exclusions.join('\n')
+  commercialTermsText.value = metadata.value.commercialTerms.join('\n')
   activeEvidence.value = ''
   draftDirty.value = false
 }
 function addLine() {
-  lines.value.push({ key: ++rowKey, serviceId: catalog.value?.services[0]?.id ?? '', quantity: '', evidence: '', source: 'manual' })
+  lines.value.push({ key: ++rowKey, serviceId: catalog.value?.services[0]?.id ?? '', quantity: '', evidence: '', source: 'manual', clientDescription: '' })
   edit()
 }
 function removeLine(key: number) { lines.value = lines.value.filter(line => line.key !== key); edit() }
@@ -172,6 +192,7 @@ async function newProject() {
     creatingTitle.value = ''
     creatingBrief.value = ''
     await loadProject(project.id)
+    await loadIndex()
     notice.value = 'Original brief saved. Add scoped deliverables to begin.'
   })
 }
@@ -207,7 +228,7 @@ function applySuggestionsToDraft(){
       key:++rowKey,serviceId:item.serviceId,
       quantity:quote && item.quantity!==null ? String(item.quantity) : '',
       evidence:quote??'AI suggestion without verifiable source evidence — confirm manually',
-      source:quote?'brief' as const:'manual' as const
+      source:quote?'brief' as const:'manual' as const, clientDescription: ''
     }
   })
   if(!accepted.length)return
@@ -225,10 +246,17 @@ async function saveScope() {
   await run(async () => {
     const deliverables: Deliverable[] = lines.value.map(l => ({
       serviceId: l.serviceId, quantity: String(l.quantity ?? '').trim() === '' ? null : Number(l.quantity),
-      evidence: l.evidence.trim(), source: l.source
+      evidence: l.evidence.trim(), source: l.source, clientDescription: l.clientDescription
     }))
     const unknownList = unknowns.value.split('\n').map(s => s.trim()).filter(Boolean)
-    const next = await api.createScope(targetId, { deliverables, unknowns: unknownList })
+    const proposalMetadata: ProposalMetadata = {
+      overview: metadata.value.overview,
+      assumptions: parseLines(assumptionsText.value),
+      exclusions: parseLines(exclusionsText.value),
+      commercialTerms: parseLines(commercialTermsText.value)
+    }
+    validateProposal(proposalMetadata, deliverables)
+    const next = await api.createScope(targetId, { deliverables, unknowns: unknownList, proposal:proposalMetadata })
     await api.estimate(targetId, { scopeRevision: next.revision, catalogVersion: catalog.value!.version })
     await reload('Revision ' + next.revision + ' saved and recalculated. Previous approvals do not transfer.')
   })
@@ -289,7 +317,7 @@ async function changeWorkspace() {
   snapshot.value = null
   currentId.value = ''
   catalogs.value = []
-  await run(async () => { catalogs.value = await api.catalogs() })
+  await run(async () => { await loadWorkspace() })
 }
 async function disconnect() {
   signOut()
@@ -298,7 +326,106 @@ async function disconnect() {
   catalogs.value = []
   currentId.value = ''
   clearFeedback()
+  projectPage.value = null
+  view.value = 'index'
 }
+
+function parseLines(value: string) { return value.split('\n').map(x => x.trim()).filter(Boolean) }
+function validateProposal(value: ProposalMetadata, deliverables: Deliverable[]) {
+  const groups = [value.assumptions,value.exclusions,value.commercialTerms]
+  if (value.overview.length > 4000 || groups.some(a => a.length > 50 || a.some(x => x.length > 2000)) ||
+      deliverables.some(x => (x.clientDescription ?? '').length > 2000) || JSON.stringify(value).length > 65536)
+    throw new ApiError(422,'INVALID_INPUT','Proposal text exceeds the contract limits. Use shorter descriptions and up to 50 entries per section.')
+}
+function guardUnsaved() {
+  return !(draftDirty.value || catalogDirty.value) ||
+    window.confirm('Discard unsaved scope or catalog changes? They have not been saved as a revision.')
+}
+function navigate(next: 'index' | 'workbench' | 'new' | 'catalog') {
+  if (!guardUnsaved()) return
+  clearFeedback()
+  view.value = next
+  if (next === 'index') void loadIndex()
+}
+function hydrateCatalog() {
+  const latest = catalog.value
+  catalogBaseVersion.value = latest?.version ?? 0
+  catalogCurrency.value = latest?.currency ?? 'IDR'
+  rateRows.value = (latest?.services ?? []).map(x => ({
+    key:++rowKey,id:x.id,label:x.label,price:String(x.unitPriceMinor)
+  }))
+  catalogDirty.value = false
+}
+function markCatalogDirty() { catalogDirty.value = true; notice.value = '' }
+function addRate() {
+  rateRows.value.push({key:++rowKey,id:'',label:'',price:'0'})
+  markCatalogDirty()
+}
+async function saveCatalog() {
+  if (!canManageCatalog.value) return
+  clearFeedback()
+  const services = rateRows.value.map(x => ({id:x.id.trim(),label:x.label.trim(),unitPriceMinor:Number(x.price)}))
+  if (!services.length || services.length > 200 || new Set(services.map(x=>x.id)).size !== services.length ||
+      services.some(x=>!x.id || !x.label || !/^\d+$/.test(String(x.unitPriceMinor)) ||
+        !Number.isSafeInteger(x.unitPriceMinor) || x.unitPriceMinor < 0) || !/^[A-Z]{3}$/.test(catalogCurrency.value)) {
+    error.value = 'Add 1–200 unique named services with nonnegative safe integer prices in minor units.'
+    return
+  }
+  catalogSaving.value = true
+  try {
+    await api.createCatalog({baseVersion:catalogBaseVersion.value,currency:catalogCurrency.value,services})
+    catalogs.value = await api.catalogs()
+    hydrateCatalog()
+    if (currentId.value && snapshot.value) await reload()
+    await loadIndex()
+    notice.value = 'New immutable catalog version published. Existing estimates must be recalculated and reviewed.'
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 403) ownerDenied.value = true
+    if (cause instanceof ApiError && cause.code === 'STALE_CATALOG_VERSION')
+      error.value = 'Another owner published rates. Your edits remain unsaved; reload latest before retrying.'
+    else showError(cause)
+  } finally { catalogSaving.value = false }
+}
+async function loadIndex(cursor: string | null = null, page = 0) {
+  if (!authenticated.value) return
+  listBusy.value = true
+  try {
+    const result = await api.listProjects({limit:10,cursor:cursor ?? undefined})
+    projectPage.value = result
+    pageNumber.value = page
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 401) authenticated.value = false
+    showError(cause)
+  } finally { listBusy.value = false }
+}
+async function nextPage() {
+  if (!projectPage.value?.nextCursor) return
+  const next = projectPage.value.nextCursor
+  await loadIndex(next,pageNumber.value+1)
+  if (!error.value) pageCursors.value[pageNumber.value] = next
+}
+async function previousPage() {
+  if (pageNumber.value === 0) return
+  await loadIndex(pageCursors.value[pageNumber.value-1],pageNumber.value-1)
+}
+async function loadWorkspace() {
+  catalogs.value = await api.catalogs()
+  hydrateCatalog()
+  pageCursors.value = [null]
+  pageNumber.value = 0
+  await loadIndex()
+}
+async function openExisting(id: string) {
+  if (!guardUnsaved()) return
+  await loadProject(id)
+}
+function confirmUnload(event: BeforeUnloadEvent) {
+  if (!draftDirty.value && !catalogDirty.value) return
+  event.preventDefault()
+}
+window.addEventListener('beforeunload', confirmUnload)
+onUnmounted(() => window.removeEventListener('beforeunload', confirmUnload))
+
 onMounted(async () => {
   try {
     if (!isDemo) {
@@ -306,7 +433,7 @@ onMounted(async () => {
       authenticated.value = isSignedIn()
       if (!authenticated.value) { loading.value = false; return }
     }
-    catalogs.value = await api.catalogs()
+    await loadWorkspace()
     if (isDemo) await loadProject(fixtureProjectId)
     else loading.value = false
   } catch (cause) { showError(cause); loading.value = false }
