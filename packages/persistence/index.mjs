@@ -90,7 +90,7 @@ function normalizeDescriptions(deliverables, proposal) {
   return rows;
 }
 function md(value) {
-  return String(value).replace(/[\\\x60*_{}\[\]()#+.!|<>~>-]/g, ch => '\\' + ch)
+  return String(value).replace(/[\\\x60*_{}\[\]()#+.!|<>~>]/g, ch => '\\' + ch)
     .replace(/\r?\n/g, '  \n');
 }
 function proposalMarkdown(scope, estimate, review) {
