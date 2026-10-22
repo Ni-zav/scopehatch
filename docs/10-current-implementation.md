@@ -1,8 +1,23 @@
 # Actual implementation and CI evidence
 
-**Point-in-time snapshot:** 2026-10-22, `main` [`0b8e259c4e7c6134b24550ff82e83011fcceff4b`](https://github.com/Ni-zav/scopehatch/commit/0b8e259c4e7c6134b24550ff82e83011fcceff4b). Check current main and CI again before making later claims. [PR #17](https://github.com/Ni-zav/scopehatch/pull/17) integrated Sprint 01, [PR #21](https://github.com/Ni-zav/scopehatch/pull/21) hardened main CI and [PR #22](https://github.com/Ni-zav/scopehatch/pull/22) merged the **Sprint 02 contract only**. Neither contract nor parallel worker PRs prove runtime features. Nothing here certifies a customer production install.
+**Sprint 02 combined candidate, 2026-10-22.** [PR #32](https://github.com/Ni-zav/scopehatch/pull/32) combines nine Sprint 02 implementation PRs over Sprint 01 main `0b8e259`. The source tested on GitHub Actions is [`097b7fc21dc62aedeb0e1d94be634e8b585c616d`](https://github.com/Ni-zav/scopehatch/commit/097b7fc21dc62aed0e1d94be634e8b585c616d): [core 39709866469](https://github.com/Ni-zav/scopehatch/actions/runs/39709866469) and [Sprint 02 integration 39709866484](https://github.com/Ni-zav/scopehatch/actions/runs/39709866484) both succeeded. **These runs were before the later documentation-only updates; exact-head CI must pass again before merge.**
 
-## Exact-SHA GitHub Actions evidence
+## Sprint 02 integration evidence
+
+| Feature | Verified integration path | Known limits |
+| --- | --- | --- |
+| Trusted host-only first-owner bootstrap | `node --test tools/onboarding/test/postgres.integration.test.mjs`, disposable PostgreSQL and restricted-role denial | Real OIDC subject must be externally issuer/audience/signature-verified; not public signup |
+| Catalog publishing, tenant project index, revision-bound metadata | `node --experimental-transform-types --test apps/api/test/sprint02-postgres.test.ts`: signed SDK over live Fastify, restricted PostgreSQL, owner CAS/idempotency, stable pages, cross-tenant 404, evidence/price assertions, text-only approval invalidation | Browser and SDK cannot confer owner authority; short-lived project cursors use a per-process secret by default |
+| Human review/approval, export and audit | Same real DB/HTTP/SDK test and existing PostgreSQL/domain integrity suites; separate reviewer and stale export denial | Markdown proposal is an unsigned draft; no auto-send |
+| Vue operator workbench and authorization | `npm run test:browser` fixture tests; real Chromium with synthetic signed OIDC Authorization Code + PKCE, two identities and PostgreSQL using `apps/api/test/browser-oidc-e2e.ts` | Third-party production IdP and the new catalog UI against a real studio aren't independently certified |
+| Single-host Compose and isolated recovery | CI Compose image build/boot/health plus `RUN_SCOPEHATCH_DOCKER_RECOVERY=1 node --test deploy/tests/recovery.test.mjs`: offline disposable PostgreSQL 17 backup/restore and all-table fingerprints, migration 006 | No real customer backup, public TLS/key rotation, production upgrade or measured RTO/RPO |
+| Evaluation and inference | `npm run test:eval`, `node tests/evaluations/benchmark.mjs --mode fixture --suite extended --strict`, PostgreSQL held-usage tests | **Live-model quality, latency and actual provider cost NOT EVALUATED.** Fixture is not an actual model; unknown cost is held, not assumed zero |
+
+**Skips:** Environment-gated database tests in unit jobs and the isolated recovery test in non-Docker unit jobs were skipped by design; separate `postgres-security` and `compose-smoke` jobs executed these workflows with their real disposable dependencies and passed. Outbox consumer remains disabled; the real provider is not verified. This is an isolated **manual-first self-host candidate**, not a certified public SaaS service.
+
+## Historical Sprint 01 baseline (retained for traceability)
+
+## Exact-SHA Sprint 01 GitHub Actions evidence
 
 | Recorded run/job | Result and exercised scope | NOT established |
 | --- | --- | --- |
@@ -14,7 +29,7 @@
 
 Jobs were inspected on the recorded [CI workflow](../.github/workflows/integration.yml); this documentation task has **not** itself run local Docker, database, browser or model tests. Intermediate integration-branch CI recorded **failures**, subsequently corrected before main passed; historical failure runs should not be hidden or confused with the final SHA.
 
-## Code that exists
+## Sprint 01 code on the original baseline
 
 | Component / code reference | Implemented | Evidence boundary |
 | --- | --- | --- |
@@ -26,9 +41,9 @@ Jobs were inspected on the recorded [CI workflow](../.github/workflows/integrati
 | [`packages/extraction/`](../packages/extraction/index.mjs), [governance](../packages/governance/src/index.mjs), [inference](../apps/api/src/inference.ts), [evaluation harness](../tests/evaluations/README.md) | Validated suggestion evidence, tenant policy and durable held spend, deterministic non-model fixture, configured Ollama/OpenAI-compatible adapter | No recorded real-model benchmark or real billing reconciliation |
 | [`deploy/`](../deploy/compose.yaml), [operator instructions](operations/README.md) | Single-host Docker Compose Postgres/API/web migrations, CPU-first optional cache/model, CI boot and health | No externally verified hosted deployment or isolated restore |
 
-## Absent or externally unverified
+## Absent or externally unverified on the historical Sprint 01 baseline
 
-- **Sprint 02 code on this main SHA:** owner-only `POST /v1/catalogs`; tenant-paginated `GET /v1/projects`; scope-bound proposal overview/assumptions/exclusions/commercial terms and descriptions; trusted offline first-owner CLI; new SDK/Vue support for these. They are **planned** in [the frozen Sprint 02 interface](../contracts/sprint-02-interface.md).
+- **Sprint 02 code on old main@0b8e259:** owner-only `POST /v1/catalogs`; tenant-paginated `GET /v1/projects`; scope-bound proposal overview/assumptions/exclusions/commercial terms and descriptions; trusted offline first-owner CLI; new SDK/Vue support for these. They are **planned** in [the frozen Sprint 02 interface](../contracts/sprint-02-interface.md).
 - **Real onboarding/identity:** no externally operated trustworthy OIDC issuer configuration and verified first owner `sub` tested as a deployed studio. Seed Studio A/B are synthetic. A signed CI test JWT is not an operational account.
 - **Model validation:** optional provider adapter does not demonstrate approved real-model accuracy, prompt injection robustness against an actual model, latency or reported bill accuracy. The deterministic fixture's measured zero tokens is **not** a substitute for unknown provider usage. Unknown usage must keep the budget hold pending reconciliation.
 - **Operational resilience:** no verified isolated backup/restoration, measured RTO/RPO, public-host TLS/secret rotation/security audit, functioning durable outbox consumer or customer deployment. Redis and GPU are optional, worker disabled until validated.
