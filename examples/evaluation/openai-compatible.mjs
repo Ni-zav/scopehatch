@@ -112,5 +112,6 @@ export function configurationFromEnv(env) {
 }
 /** Backward-compatible export for the original --adapter live CLI. */
 export async function extractBrief(input,context) {
+  if(process.env.EVAL_LIVE!=='I_AUTHORIZE_MODEL_CALLS') throw failure('PROVIDER_NOT_AUTHORIZED');
   return createEvaluationAdapter({config:configurationFromEnv(process.env)}).extractBrief(input,context);
 }
