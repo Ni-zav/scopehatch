@@ -367,8 +367,8 @@ async function saveCatalog() {
   clearFeedback()
   const services = rateRows.value.map(x => ({id:x.id.trim(),label:x.label.trim(),unitPriceMinor:Number(x.price)}))
   if (!services.length || services.length > 200 || new Set(services.map(x=>x.id)).size !== services.length ||
-      services.some(x=>!x.id || !x.label || (!/^\d+$/.test(x.price.trim()) || !x.price.trim()) ||
-        !Number.isSafeInteger(x.unitPriceMinor) || x.unitPriceMinor < 0) || !/^[A-Z]{3}$/.test(catalogCurrency.value)) {
+      rateRows.value.some(x=>!x.price.trim() || !/^\d+$/.test(x.price.trim())) ||
+      services.some(x=>!x.id || !x.label || !Number.isSafeInteger(x.unitPriceMinor) || x.unitPriceMinor < 0) || !/^[A-Z]{3}$/.test(catalogCurrency.value)) {
     error.value = 'Add 1–200 unique named services with nonnegative safe integer prices in minor units.'
     return
   }
