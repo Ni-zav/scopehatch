@@ -83,5 +83,6 @@ test('raw driver errors are sanitized and transactions rollback',async()=>{
 
 test('CLI parsing rejects duplicates, unrecognized commands and missing credential path',()=>{
  assert.deepEqual(parseArgs(['--help']),{help:true});
+ assert.deepEqual(parseArgs(['tenant','create','--help']),{help:true});
  for(const args of [[],['tenant','create'],['tenant','create','--admin-db-url-file','/tmp/a','--admin-db-url-file','/tmp/b'],['tenant','create','--something']]) assert.throws(()=>parseArgs(args),InputError);
 });
