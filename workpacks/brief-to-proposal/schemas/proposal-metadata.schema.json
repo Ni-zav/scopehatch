@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scopehatch.dev/schemas/proposal-metadata/v1",
+  "title": "Human-authored scope-bound proposal metadata (never model-authoritative)",
+  "description": "Stored with an immutable scope revision; model extraction output must not write commercialTerms or approval.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "overview": {
+      "type": "string",
+      "maxLength": 4000,
+      "default": ""
+    },
+    "assumptions": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "default": []
+    },
+    "exclusions": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "default": []
+    },
+    "commercialTerms": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "default": []
+    }
+  },
+  "x-maxSerializedBytes": 65536,
+  "x-authority": "human-authored-revision-only",
+  "x-deliverableClientDescriptionMaxLength": 2000
+}

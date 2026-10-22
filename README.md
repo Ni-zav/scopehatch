@@ -1,58 +1,52 @@
 # Scopehatch
 
-**From a messy request to approved work.**
+**From messy requests to reviewed, approved work.**
 
-> STATUS: initial repo + domain kernel (2026-10-21). A pure quoting-and-approval module exists, but no API, database, LLM integration, UI, hosted service, or paying customers exist yet.
+Scopehatch is an Apache-2.0 self-hostable workbench for service studios turning ambiguous briefs into evidenced scopes, deterministic catalog-priced estimates, independent human review, and exportable **proposal drafts**. The first use case targets archviz, design and software-service agencies. It is not a customer-ready hosted service, invoicing product, or autonomous sales agent.
 
-Scopehatch is an open-source, self-hostable workbench for people and AI agents to turn ambiguous business requests into structured, evidence-backed, human-reviewed work. The first business workflow is **client brief → scoped requirements → rule-based estimate → clarification / proposal draft → review → export**.
+> **Verified Sprint 02 integration candidate (22 October 2026):** PR [#32](https://github.com/Ni-zav/scopehatch/pull/32) combines nine worker PRs. [Core CI](https://github.com/Ni-zav/scopehatch/actions/runs/39709866469) and [integration CI](https://github.com/Ni-zav/scopehatch/actions/runs/39709866484) passed on candidate code commit `097b7fc`. These are isolated fixture, PostgreSQL, browser and Compose gates, **not** independent external OIDC, real-model validation or production certification. See [the evidence ledger](docs/10-current-implementation.md).
 
-It has two aligned surfaces: (1) a human operator's browser workbench; (2) programmatic REST/SDK/MCP access for authorized agents. Both go through **the same policy, budget, audit and execution primitives**. Its modular governed inference layer supports hosted BYOK and local models, without claiming to be a generic gateway better than established offerings.
+## Developer quickstart
 
-## Run the day-1 domain kernel
+Requires Node.js **22+** and npm, from repository root:
 
-Requires Node.js 22 or later. No npm dependencies are needed for this core slice:
-
-```bash
-npm test
+```sh
+npm ci --no-audit --no-fund
+npm run build
+npm run typecheck
+npm run test:unit
+npm run test:eval
 npm run demo
 ```
 
-This runs unit tests and prints a *local example* proposal; it is not a web service or a customer-ready quote. See [implementation status](docs/10-current-implementation.md).
+`npm run demo` prints a synthetic **in-process** proposal, not a live authenticated service. For the separately labeled **fixture-only** Vue workbench:
 
-## Primary persona and use case
+```sh
+npm run dev --workspace @scopehatch/web
+```
 
-Owner/operator of a 2–20 person **archviz, design or software services agency** that repeatedly receives poorly specified requests, spends time clarifying them, and risks underquoting or sending incomplete offers.
+Visit http://localhost:4173 (see `apps/web/vite.config.ts`). The fixture's identities, prices and approvals are not real. For browser fixture tests install Chromium (`npx playwright install chromium`), then run `npm run test:browser`. These scripts are defined by root and workspace `package.json`; `npm test` aliases `npm run test:unit`.
 
-A *prospective* request: "Need exterior images and 12 interior angles for a new development. IFC and PDFs available. 4K output in two weeks. What's the price?" Scopehatch parses quantities and deliverables, flags missing assumptions and ambiguities, retrieves firm-specific service catalog rules, and proposes a quote with line-item evidence. A human edits and approves the draft. It never silently invents a binding price, sends messages, or changes external systems.
+## Built candidate versus externally unverified
 
-## Wedge, not ceiling
+| Verified candidate component | Limits |
+| --- | --- |
+| [Pure domain](src/domain.mjs): immutable revisions, integer-minor money, blockers, separate reviewer and Markdown draft | A proposal draft is not a signed/binding quotation |
+| [Fastify](apps/api/src/server.ts), [PostgreSQL](packages/persistence/index.mjs), [migrations](db/migrations/005_inference_governance.sql): signed JWT, trusted membership, tenant-scoped state, replay/audit | No externally verified production IdP/onboarding or independent security certification |
+| [Vue](apps/web/src/App.vue), [browser PKCE](apps/web/src/oidc.ts), [SDK](packages/sdk/src/client.ts): protected manual API workflow and synthetic fixture demo | Sprint 02 owner catalog, project index and immutable proposal are implemented; fixture and signed API/SDK PostgreSQL tests pass, but external production IdP is unverified |
+| [Extraction](packages/extraction/index.mjs) and [governance](packages/governance/src/index.mjs): tenant-gated suggestions, budget reservations, evaluation fixtures | Fixture is **not** a real model benchmark; model output never sets fees/approvals |
+| [Compose](deploy/compose.yaml): images, migration, runtime DB role and health smoke tests | Isolated two-container synthetic PostgreSQL restore passed in CI, but customer restore/RTO and production deployment remain unverified |
 
-- **Initial business product:** service request intake, scope clarification, and proposal preparation (not full CRM, invoicing, or e-signature).
-- **General-purpose platform:** versioned workpacks, model registry, tenant policy, approvals, task execution, evaluation, audit events, cost ledger, and an open API.
-- **Second workpack:** synthetic support-triage and policy-QA demos inherited from the old governed inference lab; use to prove extensibility, not a parallel product launch.
-- **Longer-term:** invoice exception review, customer support draft handoff, internal change approvals. Validate separately before building.
+The passing [Sprint 01 integration jobs](https://github.com/Ni-zav/scopehatch/actions/runs/39702122224) covered unit/fixture evaluations, restricted disposable PostgreSQL, synthetic signed OIDC Authorization Code + PKCE in Chromium with two actors, and Compose build/boot/health. They **did not** verify an external commercial IdP, live-model quality, restore or real customer deployment.
 
-## Current repo proposal
+## Self-hosting
 
-GitHub: [`Ni-zav/scopehatch`](https://github.com/Ni-zav/scopehatch) (initialized 2026-10-21). Proposed license: Apache-2.0 for the core; paid **hosting/convenience/support** later. Name is working only; perform registry/mark/domain diligence before launch. One historical `scopehatch.site` registration was indexed, so no claim of worldwide uniqueness.
+Follow [single-host operations](docs/operations/README.md), [integration assumptions](docs/operations/integration.md), and [backup/restore](docs/operations/backup-and-restore.md). A real install requires securely generated DB secrets, trusted OIDC issuer/JWKS and public PKCE client, **host-only trusted first-owner provisioning** ([first-run instructions](docs/first-run/README.md)), and trusted HTTPS before public access. The checked-in Studio A/B seeds are synthetic test data, never real owner onboarding. `/healthz` is liveness, not business-readiness. PostgreSQL data is authoritative; Redis and CPU-only Ollama are optional, GPU/Kubernetes unnecessary. No deployment has been externally certified.
 
-## Read order
+## The workflow and future contract
 
-1. [Product brief and personas](docs/01-product-and-usecase.md)
-2. [Landscape and positioning](docs/02-market-and-positioning.md)
-3. [MVP domain contract and workpack](docs/03-workflow-and-contracts.md)
-4. [Technical architecture and deployment](docs/04-architecture.md)
-5. [Security, economics and operating model](docs/05-security-and-costs.md)
-6. [Five-day build plan and test gates](docs/06-implementation-plan.md)
-7. [Validation, distribution and business model](docs/07-business-validation.md)
-8. [Research source register](docs/08-sources-and-uncertainties.md)
-9. [Repo bootstrap and governance](docs/09-repo-bootstrap.md) and [AGENTS.md](AGENTS.md)
-10. [Original inference plan](docs/archive/inference-lab/README.md) for design-history details and broader Mekari-style engineering traceability. This archived plan is NOT the live product scope.
+An operator retains a brief, attaches grounded service lines, identifies unknowns and requests a deterministic estimate; a **different verified principal** reviews the exact current scope/catalog binding. Only a current approved revision is exportable; there is no automatic client send. AI suggestions are untrusted and cannot change catalog prices or approve work.
 
-## Product rule
+Existing Sprint 01 endpoints are explained in [workflow/contracts](docs/03-workflow-and-contracts.md) and the [frozen interface](contracts/sprint-01-interface.md). **Sprint 02 candidate implementation**: owner-only immutable catalog creation, tenant project index, revision-bound human proposal, host-only first-owner provisioner, SDK/Vue parity, isolated restore, and an opt-in real-model evaluation harness (**no real model run**). See [frozen Sprint 02 interface](contracts/sprint-02-interface.md), [workstreams](docs/12-sprint-02-workstreams.md) and [release gates](docs/13-sprint-02-release-gates.md). PR #32 combines the worker implementations; they must not be merged independently over this integration.
 
-**An AI completion is not a business completion.** A request is finished only when required facts are grounded, deterministic constraints pass, responsible humans/agents have exercised their permissions, and the resulting artifact can be inspected or exported.
-
-## Don't confuse planning with delivery
-
-All endpoint examples, manifests, checkpoints and commercial terms are **proposed contracts**, not operational claims. If you implement a subset, advertise only the tested subset.
+Further reading: [product](docs/01-product-and-usecase.md), [positioning](docs/02-market-and-positioning.md), [architecture](docs/04-architecture.md), [security](docs/05-security-and-costs.md), [implementation plan](docs/06-implementation-plan.md), [actual implementation](docs/10-current-implementation.md), [contributing](CONTRIBUTING.md), [agents](AGENTS.md), [security reporting](SECURITY.md), [archived inference research](docs/archive/inference-lab/README.md). Historical research and schedules are not delivery claims. [LICENSE](LICENSE) supplies Apache-2.0; independently check brand/domain rights before launch.

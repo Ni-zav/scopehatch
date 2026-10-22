@@ -1,4 +1,4 @@
-import type { AuditPage, Catalog, Deliverable, Estimate, Project, ProposalExport, Review, Scope, ScopehatchApi, Snapshot, SuggestionResponse } from './types'
+import type { AuditPage, Catalog, Estimate, Project, ProjectPage, ProposalExport, Review, Scope, ScopehatchApi, Snapshot, SuggestionResponse } from './types'
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string, readonly requestId?: string) {
@@ -48,9 +48,16 @@ export function createHttpApi({ baseUrl, getAccessToken, getWorkspaceId, fetchIm
   const idPath = (id: string) => '/v1/projects/' + encodeURIComponent(id)
   return {
     async catalogs() { return (await request<{ items: Catalog[] }>('GET', '/v1/catalogs')).items },
+    async createCatalog(body) { return (await request<{ catalog: Catalog }>('POST', '/v1/catalogs', body)).catalog },
+    listProjects(options) {
+      const params = new URLSearchParams()
+      if (options?.limit !== undefined) params.set('limit', String(options.limit))
+      if (options?.cursor) params.set('cursor', options.cursor)
+      return request<ProjectPage>('GET', '/v1/projects' + (params.size ? '?' + params : ''))
+    },
     async createProject(body) { return (await request<{ project: Project }>('POST', '/v1/projects', body)).project },
     project(id) { return request<Snapshot>('GET', idPath(id)) },
-    async createScope(id, body: { deliverables: Deliverable[]; unknowns: string[] }) {
+    async createScope(id, body) {
       return (await request<{ scope: Scope }>('POST', idPath(id) + '/scopes', body)).scope
     },
     async estimate(id, body) { return (await request<{ estimate: Estimate }>('POST', idPath(id) + '/estimates', body)).estimate },

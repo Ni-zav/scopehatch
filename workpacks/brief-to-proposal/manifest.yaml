@@ -1,12 +1,15 @@
 id: brief-to-proposal
-version: 0.1.0
-description: Human-reviewed client brief to scoped proposal draft
+version: 0.2.0
+description: Human-reviewed client brief to scoped, unsigned proposal draft
 capabilities:
   - structured-extraction
   - catalog-pricing
   - human-approval
 input_schema: ./schemas/intake.schema.json
 output_schema: ./schemas/scope.schema.json
+# This metadata is authored by a verified human in an immutable scope revision.
+# It is deliberately NOT part of the non-authoritative model output schema.
+human_proposal_metadata_schema: ./schemas/proposal-metadata.schema.json
 external_side_effects: []
 approval:
   required: true
@@ -14,5 +17,11 @@ approval:
   separate_reviewer: true
 pricing:
   authoritative_source: tenant-catalog
+  amounts: integer-minor-units
+export:
+  format: markdown
+  kind: unsigned-proposal-draft
+  exact_scope_and_catalog_revision_required: true
+  user_text: escaped
 evaluation_fixture: ./fixtures/sample-briefs.jsonl
 status: contract-only

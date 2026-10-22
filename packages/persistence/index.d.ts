@@ -21,6 +21,13 @@ export interface Deliverable {
   quantity: number | null;
   evidence: string;
   source: 'brief' | 'manual';
+  clientDescription?: string;
+}
+export interface ProposalMetadata {
+  overview: string;
+  assumptions: string[];
+  exclusions: string[];
+  commercialTerms: string[];
 }
 export interface Scope {
   tenantId: string;
@@ -30,6 +37,7 @@ export interface Scope {
   brief: string;
   deliverables: Deliverable[];
   unknowns: string[];
+  proposal?: ProposalMetadata;
 }
 export interface EstimateLine extends Deliverable {
   unitPriceMinor: number | null;
@@ -73,6 +81,10 @@ export interface AuditEvent {
 }
 export interface PersistenceRepository {
   readonly context: Readonly<{ tenantId: string; actorId: string; roles: readonly Role[] }>;
+  listProjects(input?: { limit?: number; cursor?: string }): Promise<{
+    items: Array<{id: string; title: string; status: 'draft'|'blocked'|'ready'|'pending'|'approved'; createdAt: string}>;
+    nextCursor: string | null;
+  }>;
   getProject(projectId: string): Promise<{
     id: string; title: string; brief: string;
     status: 'draft' | 'blocked' | 'ready' | 'pending' | 'approved';
@@ -83,11 +95,12 @@ export interface PersistenceRepository {
   createIntake(input: { projectId: string; brief: string; requestId?: string }): Promise<{
     tenantId: string; projectId: string; revision: number; brief: string; authorId: string;
   }>;
-  createCatalog(input: { currency: string; services: CatalogService[]; requestId?: string }): Promise<Catalog>;
+  createCatalog(input: { baseVersion: number; currency: string; services: CatalogService[]; requestId?: string }): Promise<Catalog>;
   getCatalog(version?: number): Promise<Catalog>;
   listCatalogs(): Promise<Catalog[]>;
   createScope(input: {
-    projectId: string; deliverables: Deliverable[]; unknowns?: string[]; requestId?: string;
+    projectId: string; deliverables: Deliverable[]; unknowns?: string[];
+    proposal?: ProposalMetadata; requestId?: string;
   }): Promise<Scope>;
   getScope(projectId: string, revision?: number): Promise<Scope>;
   createEstimate(input: {
@@ -99,6 +112,7 @@ export interface PersistenceRepository {
   listReviews(projectId: string): Promise<Review[]>;
   exportApproved(projectId: string): Promise<{
     projectId: string; revision: number; currency: string; totalMinor: number; markdown: string;
+    proposal: ProposalMetadata;
   }>;
   approveReview(input: { projectId: string; reviewId: string; requestId?: string }): Promise<Review>;
   recordUsage(input: {

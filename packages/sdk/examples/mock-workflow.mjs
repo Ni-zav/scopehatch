@@ -5,6 +5,14 @@ const project = { id: 'demo-1', title: 'Concept visuals', brief: 'Two exterior v
 const deliverables = [{ serviceId: 'exterior', quantity: 2, evidence: 'Two exterior views', source: 'brief' }];
 const scope = { tenantId: 'fixture-tenant', projectId: project.id, revision: 1,
   authorId: 'fixture-operator', brief: project.brief, deliverables, unknowns: [] };
+const proposalMetadata = {
+  overview: 'Concept visuals for the building',
+  assumptions: ['Client supplies model geometry'],
+  exclusions: ['No animation'],
+  commercialTerms: ['Final schedule requires written confirmation'],
+};
+const versionedCatalog = { tenantId: 'fixture-tenant', currency: 'USD', version: 1,
+  services: [{ id: 'exterior', label: 'Exterior views', unitPriceMinor: 5000 }] };
 const binding = { scopeRevision: 1, catalogVersion: 1 };
 const estimate = { tenantId: 'fixture-tenant', projectId: project.id, ...binding, currency: 'USD',
   lines: [{ ...deliverables[0], unitPriceMinor: 5000, subtotalMinor: 10000 }],
@@ -14,6 +22,9 @@ const pending = { tenantId: 'fixture-tenant', projectId: project.id, ...binding,
 const approved = { ...pending, state: 'approved', approvedBy: 'fixture-reviewer' };
 
 const fixtures = new Map([
+  ['POST /v1/catalogs', { catalog: versionedCatalog }],
+  ['GET /v1/projects', { items: [{ id: project.id, title: project.title,
+    status: 'draft', createdAt: '2026-10-21T10:01:00.000Z' }], nextCursor: null }],
   ['POST /v1/projects', { project }],
   ['POST /v1/projects/demo-1/scopes', { scope }],
   ['POST /v1/projects/demo-1/estimates', { estimate }],
@@ -39,14 +50,22 @@ const client = new ScopehatchClient({
   },
 });
 
+const createdCatalog = await client.createCatalog({
+  baseVersion: 0, currency: 'USD', services: versionedCatalog.services,
+}, { idempotencyKey: 'demo-catalog' });
+const firstPage = await client.listProjects({ limit: 20 });
 const created = await client.createProject({ title: project.title, brief: project.brief }, { idempotencyKey: 'demo-create' });
-const savedScope = await client.createScope(created.id, { deliverables, unknowns: [] }, { idempotencyKey: 'demo-scope' });
+const savedScope = await client.createScope(created.id, {
+  deliverables: deliverables.map(d => ({ ...d, clientDescription: 'Two exterior views' })),
+  unknowns: [], proposal: proposalMetadata,
+}, { idempotencyKey: 'demo-scope' });
 const quote = await client.createEstimate(created.id, binding, { idempotencyKey: 'demo-estimate' });
 const review = await client.submitReview(created.id, binding, { idempotencyKey: 'demo-review' });
 // Separate simulated reviewer principal on the server. The SDK supplies neither identity nor role.
 const approvedReview = await client.approveReview(created.id, binding, { idempotencyKey: 'demo-approval' });
 const exported = await client.exportApprovedProposal(created.id, savedScope.revision);
 const audit = await client.listAudit(created.id);
-console.log(JSON.stringify({ project: created.id, scopeRevision: savedScope.revision,
+console.log(JSON.stringify({ catalogVersion: createdCatalog.version, projectsListed: firstPage.items.length,
+  project: created.id, scopeRevision: savedScope.revision,
   estimatedMinor: quote.totalMinor, reviewState: review.state, approvedBy: approvedReview.approvedBy,
   exported: exported.markdown, auditEvents: audit.items.length, mockOnly: true }, null, 2));

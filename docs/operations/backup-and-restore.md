@@ -2,6 +2,10 @@
 
 PostgreSQL is authoritative for projects, catalogs, approvals, audit events and worker leases once the persistence package is integrated. Redis is disposable cache. Ollama's model volume can be re-pulled subject to model license and availability; include future file/object stores and tenant encryption keys in the backup plan.
 
+## Disposable recovery rehearsal
+
+Run `sh deploy/scripts/rehearse-recovery.sh` from the repository root. It tests synthetic PostgreSQL 17 dumps/restores in two isolated `--network none` containers; restores table fingerprints, RLS, immutable revisions, review/export eligibility, audit/idempotency and outstanding inference holds. See [the rehearsal and upgrade guide](recovery-rehearsal.md). This does not establish a real installation's RTO/RPO.
+
 ## Logical backup
 
 Run from the repository root on an authenticated Docker host:
@@ -10,7 +14,7 @@ Run from the repository root on an authenticated Docker host:
 umask 077
 mkdir -p deploy/backups
 docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml exec -T postgres \
-  sh -ceu 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-acl' \
+  sh -ceu 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner' \
   > "deploy/backups/scopehatch-$(date -u +%Y%m%dT%H%M%SZ).dump"
 # Confirm archive readability with a PostgreSQL 17 client:
 pg_restore --list deploy/backups/<backup-name>.dump >/dev/null
@@ -27,12 +31,12 @@ If `pg_restore` is absent on host, use a version-compatible PostgreSQL client or
 docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml stop api worker web
 ```
 
-3. Restore into a **separate, empty recovery DB/volume** whenever possible. The example below targets a deliberately empty configured `POSTGRES_DB`, and fails if existing objects conflict:
+3. Restore into a **separate, empty recovery DB/volume** whenever possible. Precreate required PostgreSQL cluster roles on the isolated target (at minimum `scopehatch_app` as NOLOGIN/NOBYPASSRLS and the restricted runtime login): logical dumps do not contain cluster roles. Keep ACL grants in the archive and restoration (`--no-acl` must NOT be used without an independently verified regrant procedure). The example below targets a deliberately empty configured `POSTGRES_DB`, and fails if existing objects conflict:
 
 ```sh
 cat deploy/backups/<backup-name>.dump | docker compose --env-file .env \
   -f deploy/compose.yaml -f deploy/compose.prod.yaml exec -T postgres \
-  sh -ceu 'pg_restore --exit-on-error --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+  sh -ceu 'pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
 Do **not** run `pg_restore --clean` into an active live database without an approved downtime and rollback plan. Recreating the empty target DB requires an isolated stack or explicit DB lifecycle procedure.
@@ -43,3 +47,8 @@ Do **not** run `pg_restore --clean` into an active live database without an appr
 ## Incident recovery
 
 For suspected tenant leakage, restrict access immediately, preserve redacted evidence, rotate affected credentials, and meet incident/legal reporting duties. For corruption, preserve a forensic copy and restore to a new volume first; do not destroy the only replica with `down -v`. Verify ledger and audit correctness before announcing recovery.
+
+
+## Release and recovery validation
+
+Restore success is not proof of usable application recovery. On the isolated target, compare source/target table counts and all-column fingerprints, foreign keys, privileged versus restricted role permissions, RLS tenant A/B reads, immutable approved proposal terms, exact scope/catalog/estimate/reviewer binding, idempotent replay history, ordered audit, and outstanding inference holds. Check corruption handling (a damaged archive must fail), then independently verify signed OIDC and actual two-actor export through the application before cutover. Synthetic database fixtures are not substitute evidence for the customer's most recent real backup. Never run `down -v` or `pg_restore --clean` on a running installation. Schema migrations are forward-only; an image rollback alone cannot reverse them.

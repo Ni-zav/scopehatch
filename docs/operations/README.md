@@ -1,6 +1,6 @@
 # Scopehatch single-host deployment
 
-**Status (integration branch, 2026-10-21):** Docker images, migrations, restricted PostgreSQL runtime login, API and web HTTP health, signed Fastify/PostgreSQL unit-integration flow, and fixture Playwright desktop/mobile tests are verified in [integration CI](https://github.com/Ni-zav/scopehatch/actions/workflows/integration.yml). **Not a production release**: real browser OIDC provider credentials and the durable governed-inference ledger are not integrated, and the outbox worker remains disabled by default. Main remains unchanged until release gates pass.
+**Status (Sprint 02 operations PR, 2026-10-22):** Prior Sprint 01 integration CI verified Compose boot, migrations, restricted PostgreSQL runtime login, signed API/PostgreSQL workflow and fixture browser tests. An inference reservation ledger schema now exists, but external-model behavior and a customer OIDC installation are not proven. A new isolated recovery rehearsal requires actual Docker execution before its release gate can pass. **Not a production release.** Worker remains off by default.
 
 This stack targets a Linux single host with Docker Engine + Docker Compose v2. Kubernetes, GPU and Redis are NOT prerequisites. All commands start at the repository root.
 
@@ -84,6 +84,12 @@ Check model rights/resources separately. An `ollama list` health response proves
 ### Optional hosted OpenAI-compatible BYOK
 
 Set provider to `openai-compatible`, configure its allowlisted URL/model and write the key to `deploy/secrets/provider_api_key` (mode 0600). Do **not** put it in `.env` or logs. Add `-f deploy/compose.external-model.yaml` to the normal production invocation and call `sh deploy/scripts/preflight.sh prod external`. The governed inference endpoint requires a tenant-owned budget row, an explicitly enabled tenant/model route, and a verified operator membership. For hosted providers, set `SCOPEHATCH_INFERENCE_ALLOWED_HOSTS` to an exact approved hostname and `SCOPEHATCH_INFERENCE_TENANT_ID` to the one tenant assigned the credential; a global API key must never serve arbitrary tenants. For Ollama, explicitly allow `ollama` as the hostname. Real-model execution still requires a configured, reachable model; the offline fixture test does not prove model quality. Tokens omitted by providers remain `unknown` with their budget hold retained until reconciliation.
+
+## Upgrade and recovery checks
+
+For the isolated **CPU-only** PostgreSQL recovery rehearsal, use `sh deploy/scripts/rehearse-recovery.sh`. This requires Docker but does not load `.env`, mount production volumes, or connect to the running Compose stack. It compares all restored Scopehatch tables, reviews, immutable scopes, audit/idempotency and outstanding inference holds; see [recovery rehearsal and upgrade guide](recovery-rehearsal.md). Record `BLOCKED` rather than `PASS` if Docker is unavailable.
+
+Before an authorized, backed-up production-style upgrade, run `sh deploy/scripts/verify-upgrade.sh before`; after rebuilding/restarting via normal migration dependency ordering, run `sh deploy/scripts/verify-upgrade.sh after`. These are read-only checks of PostgreSQL schema, migration success and local web/API liveness; they do not certify signed OIDC, independent approval or exact export. Run separate authenticated smoke tests before cutover. Redis and GPU remain optional, Kubernetes absent, worker disabled until a real consumer exists.
 
 ## Lifecycle
 

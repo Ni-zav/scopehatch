@@ -108,3 +108,47 @@ describe('deterministic demo fixture — NOT production auth', () => {
     await expect(other.project('fixture-project-002')).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })
+
+describe('Sprint 02 deterministic, explicitly labeled fixture', () => {
+  it('pages project index newest-first and exposes derived blocked/draft states', async () => {
+    const api=new DemoApi()
+    await api.createProject({title:'New sample',brief:'Another brief'})
+    const first=await api.listProjects({limit:1})
+    expect(first.items[0]?.title).toBe('New sample')
+    expect(first.items[0]?.status).toBe('draft')
+    expect(first.nextCursor).not.toBeNull()
+    const second=await api.listProjects({limit:1,cursor:first.nextCursor!})
+    expect(second.items[0]?.id).toBe(fixtureProjectId)
+    expect(second.items[0]?.status).toBe('blocked')
+    await expect(api.listProjects({cursor:'forged-tenant-cursor'})).rejects.toMatchObject({code:'INVALID_CURSOR'})
+  })
+  it('restricts catalog writes to owners and rejects stale complete-version saves', async () => {
+    const api=new DemoApi()
+    await expect(api.createCatalog({baseVersion:1,currency:'IDR',services:[]})).rejects.toMatchObject({status:403})
+    api.selectPersona('owner')
+    const services=(await api.catalogs())[0]!.services
+    const next=await api.createCatalog({baseVersion:1,currency:'IDR',services})
+    expect(next.version).toBe(2)
+    expect((await api.catalogs()).map(c=>c.version)).toEqual([2,1])
+    await expect(api.createCatalog({baseVersion:1,currency:'IDR',services})).rejects.toMatchObject({code:'STALE_CATALOG_VERSION'})
+    expect((await api.listProjects()).items[0]?.status).toBe('draft')
+  })
+  it('preserves text-only scope revisions and revokes stale approval/export', async () => {
+    const api=new DemoApi()
+    const first=await api.createScope(fixtureProjectId,{deliverables:[{
+      serviceId:'interior-view',quantity:1,source:'manual',evidence:'Client confirmation',clientDescription:'Original view'
+    }],unknowns:[],proposal:{overview:'Draft v1',assumptions:[],exclusions:[],commercialTerms:['Payment on delivery']}})
+    await api.estimate(fixtureProjectId,{scopeRevision:first.revision,catalogVersion:1})
+    await api.submitReview(fixtureProjectId,{scopeRevision:first.revision,catalogVersion:1})
+    api.selectPersona('reviewer')
+    await api.approve(fixtureProjectId,{scopeRevision:first.revision,catalogVersion:1})
+    const approved=await api.export(fixtureProjectId,first.revision)
+    expect(approved.markdown).toContain('Payment on delivery')
+    api.selectPersona('operator')
+    const later=await api.createScope(fixtureProjectId,{deliverables:first.deliverables,unknowns:[],
+      proposal:{overview:'Draft v2',assumptions:[],exclusions:[],commercialTerms:['Payment before delivery']}})
+    await api.estimate(fixtureProjectId,{scopeRevision:later.revision,catalogVersion:1})
+    expect((await api.project(fixtureProjectId)).project.status).toBe('ready')
+    await expect(api.export(fixtureProjectId,first.revision)).rejects.toMatchObject({code:'APPROVAL_REQUIRED'})
+  })
+})

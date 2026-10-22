@@ -7,16 +7,46 @@ const text = { type: 'string', minLength: 1, maxLength: 50000 } as const;
 const integer = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } as const;
 const revisionBody = { type: 'object', additionalProperties: false, required: ['scopeRevision', 'catalogVersion'], properties: { scopeRevision: integer, catalogVersion: integer } } as const;
 const paramsSchema = { type: 'object', additionalProperties: false, required: ['id'], properties: { id: text } } as const;
+const catalogBody = {
+  type:'object',additionalProperties:false,required:['baseVersion','currency','services'],
+  properties:{
+    baseVersion:{type:'integer',minimum:0,maximum:Number.MAX_SAFE_INTEGER},
+    currency:{type:'string',pattern:'^[A-Z]{3}$'},
+    services:{type:'array',minItems:1,maxItems:200,items:{
+      type:'object',additionalProperties:false,required:['id','label','unitPriceMinor'],
+      properties:{id:{type:'string',minLength:1,maxLength:300},
+        label:{type:'string',minLength:1,maxLength:300},
+        unitPriceMinor:{type:'integer',minimum:0,maximum:Number.MAX_SAFE_INTEGER}}
+    }}
+  }
+} as const;
+const proposalBody={
+  type:'object',additionalProperties:false,
+  properties:{
+    overview:{type:'string',maxLength:4000},
+    assumptions:{type:'array',maxItems:50,items:{type:'string',minLength:1,maxLength:2000}},
+    exclusions:{type:'array',maxItems:50,items:{type:'string',minLength:1,maxLength:2000}},
+    commercialTerms:{type:'array',maxItems:50,items:{type:'string',minLength:1,maxLength:2000}}
+  }
+} as const;
+const projectsQuery={
+  type:'object',additionalProperties:false,properties:{
+    limit:{type:'string',pattern:'^[1-9][0-9]{0,2}$',maxLength:3},
+    cursor:{type:'string',pattern:'^[A-Za-z0-9._~-]{1,512}$',maxLength:512}
+  }
+} as const;
 const scopeBody = {
   type: 'object', additionalProperties: false, required: ['deliverables', 'unknowns'],
   properties: {
     deliverables: { type: 'array', maxItems: 500, items: { type: 'object', additionalProperties: false,
       required: ['serviceId', 'quantity', 'evidence', 'source'], properties: {
         serviceId: text, quantity: { anyOf: [integer, { type: 'null' }] },
-        evidence: { type: 'string', maxLength: 50000 }, source: { type: 'string', enum: ['brief', 'manual'] }
+        evidence: { type: 'string', maxLength: 50000 }, source: { type: 'string', enum: ['brief', 'manual'] },
+        clientDescription:{type:'string',maxLength:2000}
       }
     } },
-    unknowns: { type: 'array', maxItems: 500, items: text }
+    unknowns: { type: 'array', maxItems: 500, items: text },
+    proposal: proposalBody
   }
 } as const;
 const idempotency = (req: FastifyRequest) => {
@@ -57,6 +87,12 @@ export function buildServer(deps: { store: PersistencePort; memberships: Members
     (req as FastifyRequest & { principal?: Principal }).principal = await authenticate(matches?.[1], rawTenant, deps.verify, deps.memberships);
   });
   app.get('/v1/catalogs', async req => service.catalogs(actor(req)));
+  app.post('/v1/catalogs',{schema:{body:catalogBody}},async(req,reply)=>
+    send(reply,service.createCatalog(actor(req),idempotency(req),data(req),req.id)));
+  app.get('/v1/projects',{schema:{querystring:projectsQuery}},async req=>{
+    const query=req.query as {limit?:string;cursor?:string};
+    return service.listProjects(actor(req),query.cursor,query.limit===undefined?20:Number(query.limit));
+  });
   app.post('/v1/projects', { schema: { body: { type: 'object', additionalProperties: false, required: ['title', 'brief'], properties: { title: { ...text, maxLength: 300 }, brief: text } } } },
     async (req, reply) => send(reply, service.createProject(actor(req), idempotency(req), data(req), req.id)));
   app.get('/v1/projects/:id', { schema: { params: paramsSchema } }, async req => service.project(actor(req), idOf(req)));
