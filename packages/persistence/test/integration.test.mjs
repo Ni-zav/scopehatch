@@ -393,6 +393,44 @@ test('S02: approved proposal uses immutable exact revision and safely rendered m
   })),{code:'INVALID_INPUT'});
 });
 
+test('S02: list and detail share draft/blocked/ready/pending/approved read state', {skip:!enabled}, async () => {
+  const projectId=randomUUID();
+  const base=await store.withPrincipal(a,async tx=>{
+    const catalog=(await tx.listCatalogs())[0];
+    await tx.createProject({id:projectId,title:'Status transitions',brief:'one image'});
+    const draft=await tx.getProject(projectId);
+    assert.equal(draft.status,'draft');
+    const blockedScope=await tx.createScope({projectId,deliverables:[
+      {serviceId:'render',quantity:null,evidence:'one image',source:'brief'}
+    ]});
+    await tx.createEstimate({
+      projectId,scopeRevision:blockedScope.revision,catalogVersion:catalog.version
+    });
+    assert.equal((await tx.getProject(projectId)).status,'blocked');
+    const readyScope=await tx.createScope({projectId,deliverables:[
+      {serviceId:'render',quantity:1,evidence:'one image',source:'brief'}
+    ]});
+    assert.equal((await tx.getProject(projectId)).status,'draft');
+    const quote=await tx.createEstimate({
+      projectId,scopeRevision:readyScope.revision,catalogVersion:catalog.version
+    });
+    assert.equal((await tx.getProject(projectId)).status,'ready');
+    const review=await tx.submitReview({projectId,estimateRevision:quote.revision});
+    assert.equal((await tx.getProject(projectId)).status,'pending');
+    const page=await tx.listProjects({limit:100});
+    assert.equal(page.items.find(x=>x.id===projectId)?.status,'pending');
+    return review;
+  });
+  await store.withPrincipal(reviewerA,tx=>tx.approveReview({projectId,reviewId:base.id}));
+  const result=await store.withPrincipal(reviewerA,async tx=>{
+    const detail=await tx.getProject(projectId);
+    const page=await tx.listProjects({limit:100});
+    return {detail,summary:page.items.find(x=>x.id===projectId)};
+  });
+  assert.equal(result.detail.status,'approved');
+  assert.equal(result.summary.status,result.detail.status);
+});
+
 test('S02: DB denies operators catalog mutations; owners win atomic CAS; replay safe', {skip:!enabled}, async () => {
   const editor={tenantId:'studio-a',id:'a-s02-editor'};
   const versions=await store.withPrincipal(a,tx=>tx.listCatalogs());
