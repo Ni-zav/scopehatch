@@ -318,7 +318,8 @@ async function beginLogin() {
   try { await beginSignIn() } catch(cause) { showError(cause) }
 }
 async function changeWorkspace() {
-  if (isDemo || !authenticated.value) return
+  if (isDemo || !authenticated.value || !guardUnsaved()) return
+  ownerDenied.value = false
   sessionStorage.setItem('scopehatch.workspace', selectedWorkspace.value.trim())
   snapshot.value = null
   currentId.value = ''
@@ -333,6 +334,9 @@ async function disconnect() {
   currentId.value = ''
   clearFeedback()
   projectPage.value = null
+  ownerDenied.value = false
+  catalogDirty.value = false
+  draftDirty.value = false
   view.value = 'index'
 }
 
@@ -363,6 +367,17 @@ function hydrateCatalog() {
   catalogDirty.value = false
 }
 function markCatalogDirty() { catalogDirty.value = true; notice.value = '' }
+async function refreshCatalogs() {
+  if (!guardUnsaved()) return
+  clearFeedback()
+  catalogSaving.value = true
+  try {
+    catalogs.value = await api.catalogs()
+    hydrateCatalog()
+    notice.value = 'Loaded the latest published catalog version.'
+  } catch (cause) { showError(cause) }
+  finally { catalogSaving.value = false }
+}
 function addRate() {
   rateRows.value.push({key:++rowKey,id:'',label:'',price:'0'})
   markCatalogDirty()
@@ -510,6 +525,7 @@ onMounted(async () => {
         <div v-if="notice" class="alert notice-alert" role="status"><span aria-hidden="true">✓</span><p>{{ notice }}</p><button type="button" aria-label="Dismiss message" @click="notice = ''">×</button></div>
 
         <section v-if="view === 'index'" class="index-page" aria-labelledby="index-heading">
+          <div v-if="!catalog" class="inline-alert" role="status">This workspace has no published catalog yet. <button class="text-button" type="button" @click="navigate('catalog')">Open owner catalog setup →</button></div>
           <div class="index-header">
             <div><p class="overline">WORKSPACE / PROJECTS</p><h1 id="index-heading">Your studio's work.</h1><p class="lede">Reopen original briefs and see each project's current status.</p></div>
             <button class="button primary" type="button" :disabled="!authenticated" @click="navigate('new')">New client brief →</button>
@@ -532,7 +548,7 @@ onMounted(async () => {
           <p class="lede">Publishing replaces the entire service list as a new immutable version. Prices are integer minor units, never model-generated.</p>
           <div class="surface-card">
             <div class="panel-heading"><div><h2>Catalog v{{ catalog?.version ?? 0 }}</h2><p class="muted">{{ catalogs.length }} recorded version{{ catalogs.length === 1 ? '' : 's' }}</p></div>
-              <button class="button secondary" type="button" :disabled="catalogSaving" @click="hydrateCatalog">Discard edits and reload</button>
+              <button class="button secondary" type="button" :disabled="catalogSaving" @click="refreshCatalogs">Reload published rates</button>
             </div>
             <p v-if="!catalog" class="inline-alert">No catalog exists yet. A verified owner must publish version one before a quote can be priced.</p>
             <p v-if="ownerDenied" role="status" class="inline-alert">The API denied catalog publishing (403). Verified owner membership is required.</p>
