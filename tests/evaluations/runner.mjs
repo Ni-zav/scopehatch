@@ -61,6 +61,7 @@ export function inspectSuggestion(output, brief, allowedServiceIds) {
       if (!record(d) || !hasOnly(d,ALLOWED_DELIVERABLE_KEYS)) {invalid('invalid_deliverable_object');continue;}
       if (typeof d.serviceId!=='string' || !allowedServiceIds.has(d.serviceId)) invalid('noncatalog_service');
       if (!(d.quantity===null || (Number.isSafeInteger(d.quantity) && d.quantity>0))) invalid('invalid_quantity');
+      if (d.evidence===null && d.quantity===null) continue; // contract permits an explicitly ungrounded draft abstention
       if (!record(d.evidence) || !hasOnly(d.evidence,ALLOWED_EVIDENCE_KEYS)) {invalid('invalid_evidence_object');continue;}
       spanTotal++;
       const {start,end,quote}=d.evidence;
