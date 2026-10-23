@@ -54,7 +54,16 @@ const EMPTY_PROPOSAL = Object.freeze({
   overview: '', assumptions: [], exclusions: [], commercialTerms: []
 });
 const PROPOSAL_FIELDS = ['overview', 'assumptions', 'exclusions', 'commercialTerms'];
-const CURSOR_SECRET = Buffer.from(process.env.SCOPEHATCH_CURSOR_SECRET || randomBytes(32).toString('hex'));
+// A generated per-process key is safe for a local fixture, but invalidates
+// signed pagination cursors on restart or load-balanced API instances.
+const configuredCursorSecret = process.env.SCOPEHATCH_CURSOR_SECRET;
+if (process.env.NODE_ENV === 'production' && !configuredCursorSecret) {
+  throw new Error('SCOPEHATCH_CURSOR_SECRET is required in production');
+}
+if (configuredCursorSecret && configuredCursorSecret.length < 32) {
+  throw new Error('SCOPEHATCH_CURSOR_SECRET must contain at least 32 characters');
+}
+const CURSOR_SECRET = Buffer.from(configuredCursorSecret || randomBytes(32).toString('hex'));
 const CURSOR_TTL_MS = 24 * 60 * 60 * 1000;
 function normalizeProposal(raw) {
   if (raw === undefined) return { overview: '', assumptions: [], exclusions: [], commercialTerms: [] };

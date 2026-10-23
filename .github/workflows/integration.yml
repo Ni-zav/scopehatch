@@ -102,6 +102,8 @@ jobs:
           sudo chown 1000:1000 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
           sudo chmod 0400 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
           cp .env.example .env
+          # Only disposable CI config; do not print the generated secret.
+          sed -i "s/^SCOPEHATCH_CURSOR_SECRET=$/SCOPEHATCH_CURSOR_SECRET=$(openssl rand -hex 32)/" .env
           sed -i 's#https://issuer.example.invalid/#https://identity.integration.invalid/#' .env
           sed -i 's#https://issuer.example.invalid/.well-known/jwks.json#https://identity.integration.invalid/jwks.json#' .env
       - name: Compose parse and preflight
