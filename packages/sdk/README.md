@@ -72,6 +72,15 @@ Also exposed: `getProject`, `approveReview`, `suggestScope`, `staticBearerToken`
 
 The SDK intentionally does not accept an authoritative `tenantId`, `actorId`, `role`, `approvedBy`, or `version` on mutation inputs; only catalog services accept owner-authored `unitPriceMinor` on `createCatalog`. It serializes allowlisted properties, so runtime extra properties supplied by JavaScript callers are discarded. Server-side validation and authorization remain mandatory.
 
+## Transport security
+
+The SDK requires HTTPS for remote API connections because requests include an
+OIDC bearer token and optional workspace selector. Plain HTTP is accepted only
+for literal loopback `localhost`, `127.0.0.1`, or `[::1]` development endpoints.
+HTTP redirects are rejected instead of being followed. If deploying behind a
+reverse proxy, configure its public HTTPS address as `baseUrl`; do not point
+the SDK at an unencrypted private-network hostname.
+
 ## Retries and idempotency
 
 All `POST` requests require an explicit `idempotencyKey`; the SDK will not manufacture one. By default, GET requests retry up to 2 additional times on `429`, `502`, `503`, `504` and transport errors; POST requests are **never retried** by default. If a deployed server correctly implements the frozen idempotency contract and the caller accepts the risk, a POST can opt in with `{ idempotencyKey, retry: true }`. Every retry sends the same body and idempotency key. Never reuse one key for a different body. No retry occurs on `401`, `403`, `404`, `409` or `422`. Retry delays and `Retry-After` are bounded; no unbounded retry loops or hidden approval calls.
