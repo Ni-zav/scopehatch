@@ -4,11 +4,11 @@
 
 Scopehatch is an Apache-2.0 self-hostable workbench for service studios turning ambiguous briefs into evidenced scopes, deterministic catalog-priced estimates, independent human review, and exportable **proposal drafts**. The first use case targets archviz, design and software-service agencies. It is not a customer-ready hosted service, invoicing product, or autonomous sales agent.
 
-> **Verified Sprint 02 integration candidate (22 October 2026):** PR [#32](https://github.com/Ni-zav/scopehatch/pull/32) combines nine worker PRs. [Core CI](https://github.com/Ni-zav/scopehatch/actions/runs/39709866469) and [integration CI](https://github.com/Ni-zav/scopehatch/actions/runs/39709866484) passed on candidate code commit `097b7fc`. These are isolated fixture, PostgreSQL, browser and Compose gates, **not** independent external OIDC, real-model validation or production certification. See [the evidence ledger](docs/10-current-implementation.md).
+> **Verified Sprint 02 integration candidate (22 October 2026):** PR [#32](https://github.com/Ni-zav/scopehatch/pull/32) combines nine worker PRs. [Core CI](https://github.com/Ni-zav/scopehatch/actions/runs/39709866469) and [integration CI](https://github.com/Ni-zav/scopehatch/actions/runs/39709866484) passed on candidate code commit `097b7fc`. These are isolated fixture, PostgreSQL, browser and Compose gates, **not** independent external OIDC, real-model validation or production certification. See [the historical evidence ledger](docs/10-current-implementation.md) and [24 October release checkpoint](docs/14-release-evidence-2026-10-24.md).
 
 ## Developer quickstart
 
-Requires Node.js **22+** and npm, from repository root:
+Requires patched Node.js **22.23.4** and npm, from repository root (see `.nvmrc`):
 
 ```sh
 npm ci --no-audit --no-fund
