@@ -53,6 +53,12 @@ function validateBaseUrl(value: string): string {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
     throw new ScopehatchConfigurationError('baseUrl must be an HTTP(S) URL without userinfo, query or fragment');
   }
+  // Authorization headers contain bearer tokens: never send them over an
+  // unencrypted remote connection. Only literal local-loopback endpoints may
+  // use HTTP for a developer's single-machine test stack.
+  if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+    throw new ScopehatchConfigurationError('Remote Scopehatch APIs require HTTPS');
+  }
   return url.href.replace(/\/+$/, '');
 }
 
@@ -237,6 +243,9 @@ export class ScopehatchClient {
           response = await Promise.race([
             this.transport(`${this.baseUrl}${path}`, {
               method, headers, signal: controller.signal,
+              // Never forward credentials, workspace selections, or POST keys
+              // through HTTP redirects. The API contract has no redirects.
+              redirect: 'error',
               ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
             }),
             cancelled,

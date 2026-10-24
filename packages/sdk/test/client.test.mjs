@@ -190,6 +190,24 @@ test('invalid base URLs and tuning options fail early', () => {
   assert.throws(() => harness([], { timeoutMs: 0 }), ScopehatchConfigurationError);
 });
 
+test('bearer tokens require HTTPS remotely and redirects are disallowed', async () => {
+  for (const baseUrl of [
+    'http://example.com', 'http://192.168.1.20:3000',
+    'http://localhost.example.com', 'http://[::ffff:127.0.0.1]',
+  ]) {
+    assert.throws(() => harness([], { baseUrl }), ScopehatchConfigurationError);
+  }
+  for (const baseUrl of [
+    'https://scope.test', 'http://localhost:3000',
+    'http://127.0.0.1:3000', 'http://[::1]:3000',
+  ]) {
+    const { client, calls } = harness([json({ items: [] })], { baseUrl });
+    await client.listCatalogs();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].init.redirect, 'error');
+  }
+});
+
 test('suggestions remain drafts, with explicit idempotency', async () => {
   const suggestion = { suggestion: { deliverables: [] }, provenance: [], model: 'fixture', usage: { status: 'unknown' } };
   const { client, calls } = harness([json(suggestion)]);

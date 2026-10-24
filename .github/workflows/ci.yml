@@ -1,6 +1,7 @@
 name: core checks
 on:
   push:
+    branches: [main]
   pull_request:
 jobs:
   test:
@@ -13,3 +14,5 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
       - run: npm run demo
+      - name: Validate synthetic studio pilot scenarios
+        run: node examples/pilot/validate.mjs
