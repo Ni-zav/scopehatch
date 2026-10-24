@@ -178,10 +178,10 @@ export function createPgPorts(pool:Pool):{store:PersistencePort;memberships:Memb
     })
   };
   const memberships:MembershipPort={
-    async findByVerifiedSubject(subject) {
-      if(!subject||subject.length>512)return [];
+    async findByVerifiedSubject(subject,issuer) {
+      if(!subject||subject.length>512||!issuer||issuer.length>2048)return [];
       const res=await pool.query(
-        'SELECT tenant_id,principal_id,roles,active FROM scopehatch.lookup_verified_subject($1)',[subject]);
+        'SELECT tenant_id,principal_id,roles,active FROM scopehatch.lookup_verified_subject($1,$2)',[subject,issuer]);
       return res.rows.map(x=>({
         subject,actorId:x.principal_id,tenantId:x.tenant_id,roles:x.roles,active:x.active
       }));

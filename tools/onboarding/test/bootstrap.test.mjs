@@ -5,7 +5,7 @@ import { parseArgs } from '../cli.mjs';
 
 const base = () => ({tenantId:'valid-studio', workspaceName:'Valid Studio', ownerSub:'auth0|owner-9a1b2c',issuer:'https://login.acme.co/',expectedIssuer:'https://login.acme.co/',environment:'production',confirmEnvironment:'production', database:'scopehatch',verified:true});
 class FakeDb {
-  constructor({tenant=null,members=[],admin=true,db='scopehatch',fault=null}={}) {this.tenant=tenant;this.members=members;this.admin=admin;this.db=db;this.fault=fault;this.queries=[];this.tx=[];}
+  constructor({tenant=null,members=[],admin=true,db='scopehatch',fault=null,issuer=base().issuer}={}) {this.tenant=tenant;this.members=members;this.admin=admin;this.db=db;this.fault=fault;this.issuer=issuer;this.queries=[];this.tx=[];}
   async query(sql,params=[]) {
     this.queries.push({sql,params});
     if(this.fault && sql.includes(this.fault)) throw new Error('postgres secret=password private-sub');
@@ -14,8 +14,11 @@ class FakeDb {
     if(sql==='ROLLBACK') {this.tx=[]; return {};}
     if(sql.includes('current_user AS username'))return {rows:[{username:this.admin?'scopehatch_admin':'scopehatch_runtime',database:this.db,superuser:this.admin,bypassrls:false,tenants:'scopehatch.tenants',memberships:'scopehatch.memberships'}]};
     if(sql.includes('pg_advisory_xact_lock'))return {rows:[{}]};
+    if(sql.startsWith('SELECT tenant_id,issuer FROM'))return {rows:[]};
     if(sql.includes('SELECT id, name FROM scopehatch.tenants'))return {rows:this.tenant?[this.tenant]:[]};
     if(sql.includes('SELECT principal_id, roles, active'))return {rows:this.members};
+    if(sql.startsWith('SELECT issuer FROM'))return {rows:this.issuer?[{issuer:this.issuer}]:[]};
+    if(sql.startsWith('INSERT INTO scopehatch.tenant_identity_issuers')) {this.tx.push(()=>this.issuer=params[1]);return {};}
     if(sql.startsWith('INSERT INTO scopehatch.tenants')) {this.tx.push(()=>this.tenant={id:params[0],name:params[1]});return {};}
     if(sql.startsWith('INSERT INTO scopehatch.memberships')) {this.tx.push(()=>this.members=[{principal_id:params[1],roles:['owner'],active:true}]);return {};}
     throw new Error('unexpected query');
@@ -34,7 +37,7 @@ test('new tenant and initial owner commit together with parameterized values',as
  const db=new FakeDb();assert.equal(await provisionTenant(db,base()),'created');
  assert.equal(db.tenant.id,'valid-studio');assert.deepEqual(db.members,[{principal_id:'auth0|owner-9a1b2c',roles:['owner'],active:true}]);
  const writes=db.queries.filter(x=>x.sql.startsWith('INSERT'));
- assert.equal(writes.length,2);assert(writes.every(x=>x.sql.includes('$1') && x.sql.includes('$2') && !x.sql.includes('auth0|')));
+ assert.equal(writes.length,3);assert(writes.every(x=>x.sql.includes('$1') && x.sql.includes('$2') && !x.sql.includes('auth0|')));
  assert(db.queries.some(x=>x.sql==='COMMIT'));
 });
 
@@ -85,4 +88,12 @@ test('CLI parsing rejects duplicates, unrecognized commands and missing credenti
  assert.deepEqual(parseArgs(['--help']),{help:true});
  assert.deepEqual(parseArgs(['tenant','create','--help']),{help:true});
  for(const args of [[],['tenant','create'],['tenant','create','--admin-db-url-file','/tmp/a','--admin-db-url-file','/tmp/b'],['tenant','create','--something']]) assert.throws(()=>parseArgs(args),InputError);
+});
+
+test('bootstrap refuses missing or changed historical issuer binding',async()=>{
+  for (const issuer of [null,'https://other.acme.co/']) {
+    const db=new FakeDb({tenant:{id:'valid-studio',name:'Valid Studio'},issuer});
+    await assert.rejects(provisionTenant(db,base()),ConflictError);
+    assert(db.queries.some(x=>x.sql==='ROLLBACK'));
+  }
 });

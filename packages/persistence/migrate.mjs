@@ -26,7 +26,8 @@ try {
   for (const name of [
     '001_initial.sql', '002_quote_integrity.sql',
     '003_immutable_children_usage.sql', '004_identity_lookup.sql',
-    '005_inference_governance.sql', '006_sprint02_catalog_proposals_projects.sql'
+    '005_inference_governance.sql', '006_sprint02_catalog_proposals_projects.sql',
+    '007_tenant_identity_issuer.sql'
   ]) {
     const sql = await readFile(fileURLToPath(new URL('../../db/migrations/' + name, import.meta.url)), 'utf8');
     await client.query(sql);

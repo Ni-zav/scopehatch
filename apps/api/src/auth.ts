@@ -2,7 +2,7 @@ import { createLocalJWKSet, createRemoteJWKSet, jwtVerify, type JSONWebKeySet } 
 import type { MembershipPort, Principal, Role } from './ports.ts';
 import { ApiError, validRoles } from './core.ts';
 
-export type VerifiedIdentity = Readonly<{ subject: string }>;
+export type VerifiedIdentity = Readonly<{ subject: string; issuer: string }>;
 export type TokenVerifier = (token: string) => Promise<VerifiedIdentity>;
 export type JwtConfig = Readonly<{
   issuer: string; audience: string; jwksUrl?: string; localJwks?: JSONWebKeySet;
@@ -19,7 +19,7 @@ export function oidcVerifier(config: JwtConfig): TokenVerifier {
       clockTolerance: 0, requiredClaims: ['sub', 'iss', 'aud', 'exp', 'iat']
     });
     if (typeof payload.sub !== 'string' || !payload.sub) throw new Error('Missing subject');
-    return { subject: payload.sub };
+    return { subject: payload.sub, issuer: config.issuer };
   };
 }
 /** Workspace header may SELECT a tenant only after membership verification; it grants no authority. */
@@ -29,7 +29,7 @@ export async function authenticate(token: string | undefined, selectedTenant: st
   let identity: VerifiedIdentity;
   try { identity = await verify(token); }
   catch { throw new ApiError('UNAUTHENTICATED', 401, 'Invalid access token'); }
-  const rows = (await memberships.findByVerifiedSubject(identity.subject)).filter(m => m.active && m.subject === identity.subject);
+  const rows = (await memberships.findByVerifiedSubject(identity.subject, identity.issuer)).filter(m => m.active && m.subject === identity.subject);
   const valid = rows.filter(m => m.actorId && m.tenantId && m.roles.length &&
     m.roles.every(r => (validRoles as readonly string[]).includes(r)));
   const candidates = selectedTenant ? valid.filter(m => m.tenantId === selectedTenant) : valid;

@@ -6,10 +6,11 @@ import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import { buildServer } from '../src/server.ts';
 import { oidcVerifier } from '../src/auth.ts';
 import { createPgPorts, assertRestrictedPgPool } from '../src/postgres.ts';
+import { bindFixtureIssuer } from './identity-fixture.ts';
 import { createInferenceGateway } from '../src/inference.ts';
 
 const connectionString=process.env.TEST_PG_APP_URL;
-test('published SDK can run the authenticated two-actor workflow on durable Postgres', {skip:!connectionString},async t=>{
+test('published SDK can run the authenticated two-actor workflow on durable Postgres', {skip:!connectionString||!process.env.TEST_PG_ADMIN_URL},async t=>{
   const {ScopehatchClient,staticBearerToken}=await import('../../../packages/sdk/dist/src/index.js');
   const pool=new Pool({connectionString,max:8});
   t.after(()=>pool.end());
@@ -17,6 +18,7 @@ test('published SDK can run the authenticated two-actor workflow on durable Post
   const {publicKey,privateKey}=await generateKeyPair('RS256');
   const jwk=await exportJWK(publicKey);jwk.kid='sdk-integrated-key';jwk.use='sig';jwk.alg='RS256';
   const issuer='https://sdk-identity.scopehatch.invalid/';
+  await bindFixtureIssuer(issuer);
   const audience='scopehatch-api';
   const app=buildServer({...createPgPorts(pool),
     verify:oidcVerifier({issuer,audience,localJwks:{keys:[jwk]}}),

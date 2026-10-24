@@ -13,11 +13,13 @@ import { chromium } from '@playwright/test';
 import { buildServer } from '../src/server.ts';
 import { oidcVerifier } from '../src/auth.ts';
 import { createPgPorts, assertRestrictedPgPool } from '../src/postgres.ts';
+import { bindFixtureIssuer } from './identity-fixture.ts';
 import { createInferenceGateway } from '../src/inference.ts';
 
 const pgUrl=process.env.TEST_PG_APP_URL;
 if (!pgUrl) throw new Error('TEST_PG_APP_URL is required for real browser security test');
 const issuer='http://localhost:3999/';
+await bindFixtureIssuer(issuer);
 const audience='scopehatch-api';
 const base='http://127.0.0.1:4173';
 const clientId='scopehatch-playwright-public';

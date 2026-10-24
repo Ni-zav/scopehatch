@@ -5,6 +5,7 @@ DO $checks$
 DECLARE invalid_count bigint;
 BEGIN
   IF (SELECT count(*) FROM scopehatch.tenants) <> 2
+    OR (SELECT count(*) FROM scopehatch.tenant_identity_issuers) <> 2
     OR (SELECT count(*) FROM scopehatch.memberships WHERE active) <> 4
     OR (SELECT count(*) FROM scopehatch.projects) <> 2
     OR (SELECT count(*) FROM scopehatch.catalog_versions) <> 2
@@ -70,6 +71,9 @@ SELECT set_config('scopehatch.tenant_id','studio-a',true);
 SELECT set_config('scopehatch.actor_id','a-operator',true);
 DO $rls$
 BEGIN
+  IF (SELECT count(*) FROM scopehatch.lookup_verified_subject('a-operator','https://recovery.scopehatch.invalid/')) <> 1
+    OR (SELECT count(*) FROM scopehatch.lookup_verified_subject('a-operator','https://wrong.scopehatch.invalid/')) <> 0
+    THEN RAISE EXCEPTION 'Restored issuer binding failed'; END IF;
   IF (SELECT count(*) FROM scopehatch.projects) <> 1
     OR (SELECT count(*) FROM scopehatch.projects WHERE tenant_id='studio-b') <> 0
     OR (SELECT count(*) FROM scopehatch.inference_reservations WHERE tenant_id='studio-a') <> 1
