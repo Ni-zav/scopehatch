@@ -9,6 +9,9 @@ import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import { buildServer } from '../src/server.ts';
 import { oidcVerifier } from '../src/auth.ts';
 import { createPgPorts, assertRestrictedPgPool } from '../src/postgres.ts';
+import { bindFixtureIssuer } from './identity-fixture.ts';
+// @ts-expect-error Host-only JS module exercised solely by disposable integration tests.
+import { manageIdentity } from '../../../tools/onboarding/identity.mjs';
 import { createInferenceGateway } from '../src/inference.ts';
 import { provisionTenant } from '../../../tools/onboarding/bootstrap.mjs';
 
@@ -33,16 +36,14 @@ test('S02 SDK + live Fastify + RLS PG: bootstrap/catalog/index/proposal/review/e
   await admin.connect();
   let app:ReturnType<typeof buildServer>|undefined;
   try {
+    await bindFixtureIssuer(issuer);
     assert.equal(await provisionTenant(admin,{
       tenantId, workspaceName:'Isolated S02 Integration',
       ownerSub, issuer, expectedIssuer:issuer,
       environment:'development', confirmEnvironment:'development',
       database:process.env.TEST_PG_DATABASE || 'scopehatch', verified:true
     }),'created');
-    await admin.query(
-      "INSERT INTO scopehatch.memberships(tenant_id,principal_id,roles,active) VALUES ($1,$2,ARRAY['reviewer']::text[],true)",
-      [tenantId,reviewerSub]
-    );
+    await manageIdentity(admin,{tenantId,ownerSub,memberSub:reviewerSub,role:'reviewer',command:'member add',issuer,expectedIssuer:issuer,environment:'development',confirmEnvironment:'development',database:process.env.TEST_PG_DATABASE||'scopehatch',verified:true});
     await assertRestrictedPgPool(pool);
     const {publicKey,privateKey}=await generateKeyPair('RS256');
     const jwk=await exportJWK(publicKey);
@@ -127,6 +128,17 @@ test('S02 SDK + live Fastify + RLS PG: bootstrap/catalog/index/proposal/review/e
     },{idempotencyKey:randomUUID()}),isHttp(409));
     const audit=await owner.listAudit(p1.id,{limit:100});
     assert.ok(audit.items.some(x=>x.action==='review.approved'));
+    const changedIssuer='https://changed.idp.acme.co/';
+    const replacement=buildServer({...ports,verify:oidcVerifier({issuer:changedIssuer,audience,localJwks:{keys:[jwk]}})});
+    try {
+      const collision=await new SignJWT({}).setProtectedHeader({alg:'RS256',kid:jwk.kid})
+        .setIssuer(changedIssuer).setAudience(audience).setSubject(ownerSub)
+        .setIssuedAt().setExpirationTime('5m').sign(privateKey);
+      const denied=await replacement.inject({method:'GET',url:'/v1/catalogs',headers:{authorization:'Bearer '+collision}});
+      assert.equal(denied.statusCode,403,'Changing configured issuer must not transfer an existing subject membership');
+    } finally {await replacement.close();}
+    await manageIdentity(admin,{tenantId,ownerSub,memberSub:reviewerSub,command:'member disable',issuer,expectedIssuer:issuer,environment:'development',confirmEnvironment:'development',database:process.env.TEST_PG_DATABASE||'scopehatch',verified:true});
+    await assert.rejects(reviewer.listCatalogs(),isHttp(403));
   } finally {
     if(app) await app.close();
     await pool.end();

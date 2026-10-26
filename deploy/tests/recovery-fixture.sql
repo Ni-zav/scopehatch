@@ -1,6 +1,9 @@
 -- Synthetic restore-rehearsal data only; NEVER run against a customer database.
 -- Requires freshly migrated, disposable PostgreSQL and the checked-in demo seeds.
 BEGIN;
+INSERT INTO scopehatch.tenant_identity_issuers(tenant_id,issuer) VALUES
+ ('studio-a','https://recovery.scopehatch.invalid/'),
+ ('studio-b','https://recovery.scopehatch.invalid/');
 SELECT set_config('scopehatch.tenant_id','studio-a',true);
 SELECT set_config('scopehatch.actor_id','a-reviewer',true);
 UPDATE scopehatch.reviews SET state='approved', approved_by='a-reviewer', approved_at=now()

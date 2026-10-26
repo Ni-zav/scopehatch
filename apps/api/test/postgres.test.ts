@@ -6,12 +6,14 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { buildServer } from '../src/server.ts';
 import { oidcVerifier } from '../src/auth.ts';
 import { assertRestrictedPgPool, createPgPorts } from '../src/postgres.ts';
+import { bindFixtureIssuer } from './identity-fixture.ts';
 
 const appUrl = process.env.TEST_PG_APP_URL;
 const issuer = 'https://test-issuer.scopehatch.invalid/';
 const audience = 'scopehatch-api';
 
-test('signed HTTP workflow uses restricted real PostgreSQL and independent approval', {skip: !appUrl}, async t => {
+test('signed HTTP workflow uses restricted real PostgreSQL and independent approval', {skip: !appUrl||!process.env.TEST_PG_ADMIN_URL}, async t => {
+  await bindFixtureIssuer(issuer);
   const pool = new Pool({connectionString:appUrl,max:8});
   t.after(()=>pool.end());
   await assertRestrictedPgPool(pool);

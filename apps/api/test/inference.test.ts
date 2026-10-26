@@ -6,6 +6,7 @@ import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import { buildServer } from '../src/server.ts';
 import { oidcVerifier } from '../src/auth.ts';
 import { assertRestrictedPgPool, createPgPorts } from '../src/postgres.ts';
+import { bindFixtureIssuer } from './identity-fixture.ts';
 import { createInferenceGateway } from '../src/inference.ts';
 // @ts-expect-error Independently packaged JS governance module.
 import { GovernanceEngine } from '../../../packages/governance/src/index.mjs';
@@ -32,6 +33,7 @@ test('signed operator can obtain replay-safe, evidence-backed, governed fixture 
   const kp=await generateKeyPair('RS256');
   const jwk=await exportJWK(kp.publicKey);jwk.kid='gov-local';jwk.alg='RS256';
   const issuer='https://fixture.test-issuer.invalid/';
+  await bindFixtureIssuer(issuer);
   const audience='scopehatch-api';
   const server=buildServer({...ports,
     verify:oidcVerifier({issuer,audience,localJwks:{keys:[jwk]}}),

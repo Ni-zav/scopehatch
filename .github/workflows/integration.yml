@@ -26,7 +26,7 @@ jobs:
           node tests/evaluations/benchmark.mjs --mode fixture --suite extended --strict
       - name: Bootstrap and restore safety unit tests
         run: |
-          node --test tools/onboarding/test/bootstrap.test.mjs
+          node --test tools/onboarding/test/bootstrap.test.mjs tools/onboarding/test/identity.test.mjs
           node --test deploy/tests/recovery.test.mjs
       - name: Docker static checks
         run: |

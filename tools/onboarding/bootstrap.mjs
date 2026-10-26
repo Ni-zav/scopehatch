@@ -37,6 +37,7 @@ export async function provisionTenant(client, input, {dryRun=false}={}) {
     const identity = await client.query("SELECT current_user AS username, current_database() AS database, r.rolsuper AS superuser, r.rolbypassrls AS bypassrls, to_regclass('scopehatch.tenants') AS tenants, to_regclass('scopehatch.memberships') AS memberships FROM pg_roles r WHERE r.rolname = current_user");
     const p = identity.rows[0];
     if (!p || p.database !== data.database || (!p.superuser && !p.bypassrls) || !p.tenants || !p.memberships || ['scopehatch_app','scopehatch_runtime'].includes(p.username)) throw new InputError('Admin role, database confirmation or migrations are invalid');
+    await client.query('SELECT tenant_id,issuer FROM scopehatch.tenant_identity_issuers LIMIT 0');
     // Serialize same tenant across concurrent admin sessions. Dry-run is observational only.
     if (!dryRun) await client.query("SELECT pg_advisory_xact_lock(hashtextextended('scopehatch/bootstrap/' || $1, 0))", [data.tenantId]);
     const existing = await client.query('SELECT id, name FROM scopehatch.tenants WHERE id=$1', [data.tenantId]);
@@ -45,9 +46,12 @@ export async function provisionTenant(client, input, {dryRun=false}={}) {
       outcome = dryRun ? 'would-create' : 'created';
       if (!dryRun) {
         await client.query('INSERT INTO scopehatch.tenants(id,name) VALUES ($1,$2)', [data.tenantId, data.workspaceName]);
+        await client.query('INSERT INTO scopehatch.tenant_identity_issuers(tenant_id,issuer) VALUES ($1,$2)', [data.tenantId,data.issuer]);
         await client.query("INSERT INTO scopehatch.memberships(tenant_id,principal_id,roles,active) VALUES ($1,$2,ARRAY['owner']::text[],true)", [data.tenantId,data.ownerSub]);
       }
     } else {
+      const binding = await client.query('SELECT issuer FROM scopehatch.tenant_identity_issuers WHERE tenant_id=$1', [data.tenantId]);
+      if (binding.rows.length !== 1 || binding.rows[0].issuer !== data.issuer) throw new ConflictError();
       const members = await client.query('SELECT principal_id, roles, active FROM scopehatch.memberships WHERE tenant_id=$1', [data.tenantId]);
       const exact = members.rows.find(m => m.principal_id === data.ownerSub && m.active === true && Array.isArray(m.roles) && m.roles.length === 1 && m.roles[0] === 'owner');
       const otherOwner = members.rows.some(m => m.principal_id !== data.ownerSub && Array.isArray(m.roles) && m.roles.includes('owner'));

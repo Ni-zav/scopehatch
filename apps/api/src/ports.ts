@@ -7,7 +7,7 @@ export type Membership = Readonly<{
 }>;
 export interface MembershipPort {
   /** Query a trusted identity-to-tenant membership registry, not JWT role claims. */
-  findByVerifiedSubject(subject: string): Promise<readonly Membership[]>;
+  findByVerifiedSubject(subject: string, issuer: string): Promise<readonly Membership[]>;
 }
 export type ServiceRate = Readonly<{ id: string; label: string; unitPriceMinor: number }>;
 export type Catalog = Readonly<{ tenantId: string; currency: string; version: number; services: readonly ServiceRate[] }>;
