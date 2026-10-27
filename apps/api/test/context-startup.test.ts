@@ -9,6 +9,81 @@ import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { assertRestrictedPgPool } from '../src/postgres.ts';
 
+test('startup rejects table-owner inheritance, identity writes and disabled RLS', {
+  skip: !process.env.TEST_PG_APP_URL || !process.env.TEST_PG_ADMIN_URL,
+}, async t => {
+  const app = new Pool({ connectionString: process.env.TEST_PG_APP_URL, max: 1 });
+  const admin = new Pool({ connectionString: process.env.TEST_PG_ADMIN_URL, max: 1 });
+  const quote = (name:string) => '"' + name.replaceAll('"','""') + '"';
+  const runtime = (await app.query('SELECT current_user AS name')).rows[0].name as string;
+  const owner = 'drift_owner_' + randomBytes(8).toString('hex');
+  const qRuntime = quote(runtime), qOwner = quote(owner);
+  const tenant = 'drift-tenant-' + randomBytes(8).toString('hex');
+  try {
+    await assertRestrictedPgPool(app);
+    await admin.query('CREATE ROLE '+qOwner+' NOLOGIN NOSUPERUSER NOBYPASSRLS');
+    await admin.query('INSERT INTO scopehatch.tenants(id,name) VALUES ($1,$1)',[tenant]);
+    await admin.query("INSERT INTO scopehatch.memberships(tenant_id,principal_id,roles) VALUES ($1,'drift-subject',ARRAY['operator'])",[tenant]);
+    assert.equal((await app.query('SELECT count(*)::int AS n FROM scopehatch.memberships WHERE tenant_id=$1',[tenant])).rows[0].n,0);
+    for (const table of ['scopehatch.memberships','scopehatch.projects',
+      'scopehatch.tenant_identity_issuers','scopehatch_private.context_key']) {
+      await t.test('reject inherited owner of '+table, async () => {
+        const original = (await admin.query('SELECT pg_get_userbyid(relowner) AS name FROM pg_class WHERE oid=$1::regclass',[table])).rows[0].name as string;
+        try {
+          await admin.query('ALTER TABLE '+table+' OWNER TO '+qOwner);
+          await admin.query('GRANT '+qOwner+' TO '+qRuntime);
+          assert.equal((await admin.query("SELECT has_schema_privilege($1,'scopehatch','CREATE') AS allowed",[owner])).rows[0].allowed,false);
+          if (table==='scopehatch.memberships') {
+            assert.equal((await app.query("SELECT row_security_active('scopehatch.memberships') AS active")).rows[0].active,false);
+            assert.equal((await app.query('SELECT count(*)::int AS n FROM scopehatch.memberships WHERE tenant_id=$1',[tenant])).rows[0].n,1);
+            const client = await app.connect();
+            try {
+              await client.query('BEGIN');
+              const changed = await client.query("UPDATE scopehatch.memberships SET roles=ARRAY['owner'] WHERE tenant_id=$1",[tenant]);
+              assert.equal(changed.rowCount,1);
+            } finally { await client.query('ROLLBACK'); client.release(); }
+            await admin.query('GRANT '+qOwner+' TO '+qRuntime+' WITH INHERIT FALSE, SET TRUE');
+            assert.equal((await app.query("SELECT row_security_active('scopehatch.memberships') AS active")).rows[0].active,true);
+            await assert.rejects(assertRestrictedPgPool(app),/Refusing privileged/);
+            await admin.query('GRANT '+qOwner+' TO '+qRuntime+' WITH INHERIT TRUE');
+          }
+          await assert.rejects(assertRestrictedPgPool(app),/Refusing privileged/);
+        } finally {
+          await admin.query('REVOKE '+qOwner+' FROM '+qRuntime);
+          await admin.query('ALTER TABLE '+table+' OWNER TO '+quote(original));
+        }
+        await assertRestrictedPgPool(app);
+      });
+    }
+    for (const table of ['scopehatch.memberships','scopehatch.tenant_identity_issuers']) {
+      await t.test('reject direct identity writes on '+table, async () => {
+        await admin.query('GRANT UPDATE ON '+table+' TO '+qRuntime);
+        try { await assert.rejects(assertRestrictedPgPool(app),/Refusing privileged/); }
+        finally { await admin.query('REVOKE UPDATE ON '+table+' FROM '+qRuntime); }
+        await assertRestrictedPgPool(app);
+      });
+    }
+    for (const table of ['scopehatch.memberships','scopehatch.tenant_identity_issuers','scopehatch.projects']) {
+      await t.test('reject disabled RLS on '+table, async () => {
+        await admin.query('ALTER TABLE '+table+' DISABLE ROW LEVEL SECURITY');
+        try { await assert.rejects(assertRestrictedPgPool(app),/Refusing privileged/); }
+        finally { await admin.query('ALTER TABLE '+table+' ENABLE ROW LEVEL SECURITY'); }
+        await assertRestrictedPgPool(app);
+      });
+    }
+    await t.test('reject removed FORCE RLS on issuer bindings',async () => {
+      await admin.query('ALTER TABLE scopehatch.tenant_identity_issuers NO FORCE ROW LEVEL SECURITY');
+      try { await assert.rejects(assertRestrictedPgPool(app),/Refusing privileged/); }
+      finally { await admin.query('ALTER TABLE scopehatch.tenant_identity_issuers FORCE ROW LEVEL SECURITY'); }
+    });
+    await assertRestrictedPgPool(app);
+  } finally {
+    // Synthetic append-only tenants remain in the disposable database.
+    try { await admin.query('DROP ROLE IF EXISTS '+qOwner); }
+    finally { await Promise.all([app.end(),admin.end()]); }
+  }
+});
+
 test('startup rejects key mismatch and unsafe runtime grants', {
   skip: !process.env.TEST_PG_APP_URL || !process.env.TEST_PG_ADMIN_URL,
 }, async () => {

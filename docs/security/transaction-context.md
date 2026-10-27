@@ -13,6 +13,11 @@ Legacy tenant and actor settings grant no authority.
 The runtime login cannot read the database key or execute the administrator signing helper.
 Functions use fixed search paths. The crypto function uses the installed extension namespace.
 The API checks runtime privileges and key agreement before it opens a listener.
+It rejects direct or inherited ownership of tables in both protected schemas.
+All protected tables must enable RLS and apply it to the effective runtime role.
+All protected tables require FORCE RLS except `memberships`, whose owner supports the trusted membership functions.
+The runtime login must not inherit that owner or receive write privileges on membership or issuer tables.
+These checks detect startup configuration drift. Administrators must not change privileges while application sessions remain active.
 Keep parameterized queries. Arbitrary SQL can still damage the authorized scope or cause denial of service.
 Application-process compromise, key theft, and database-administrator compromise remain outside this SQL-only boundary.
 Database metadata and activity views are not confidential tenant storage. Do not store private text in identifiers.

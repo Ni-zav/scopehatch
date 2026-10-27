@@ -146,6 +146,14 @@ export async function assertRestrictedPgPool(pool:Pool):Promise<void> {
       "SELECT current_user AS username, r.rolsuper, r.rolbypassrls, r.rolinherit, r.rolcreaterole, r.rolcreatedb, r.rolreplication,"+
       " pg_has_role(current_user,'scopehatch_app','member') AS member,"+
       " pg_get_userbyid(c.relowner) AS table_owner,"+
+      " EXISTS (SELECT 1 FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace"+
+      " WHERE n.nspname IN ('scopehatch','scopehatch_private') AND t.relkind IN ('r','p')"+
+      " AND (pg_has_role(current_user,t.relowner,'member') OR NOT t.relrowsecurity"+
+      " OR NOT row_security_active(t.oid) OR (NOT t.relforcerowsecurity"+
+      " AND NOT (n.nspname='scopehatch' AND t.relname='memberships')))) AS unsafe_table,"+
+      " EXISTS (SELECT 1 FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace"+
+      " WHERE n.nspname='scopehatch' AND t.relname IN ('memberships','tenant_identity_issuers')"+
+      " AND has_table_privilege(current_user,t.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')) AS identity_write,"+
       " EXISTS (SELECT 1 FROM pg_roles d WHERE d.rolname IN ('pg_read_all_data','pg_write_all_data',"+
       " 'pg_read_server_files','pg_write_server_files','pg_execute_server_program')"+
       " AND pg_has_role(current_user,d.oid,'member')) AS dangerous_role,"+
@@ -169,7 +177,7 @@ export async function assertRestrictedPgPool(pool:Pool):Promise<void> {
        !row.member || row.username===row.table_owner || !row.rls_active ||
        row.rolcreaterole || row.rolcreatedb || row.rolreplication || row.dangerous_role ||
        row.privileged_membership || row.signing_oracle || row.schema_control ||
-       row.key_access || row.private_signing_oracle) {
+       row.key_access || row.private_signing_oracle || row.unsafe_table || row.identity_write) {
       throw new Error('Refusing privileged or RLS-bypassing runtime database identity');
     }
     await client.query('BEGIN');
