@@ -153,7 +153,8 @@ export async function assertRestrictedPgPool(pool:Pool):Promise<void> {
       " AND NOT (n.nspname='scopehatch' AND t.relname='memberships')))) AS unsafe_table,"+
       " EXISTS (SELECT 1 FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace"+
       " WHERE n.nspname='scopehatch' AND t.relname IN ('memberships','tenant_identity_issuers')"+
-      " AND has_table_privilege(current_user,t.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')) AS identity_write,"+
+      " AND (has_table_privilege(current_user,t.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"+
+      " OR has_any_column_privilege(current_user,t.oid,'INSERT,UPDATE,REFERENCES'))) AS identity_write,"+
       " EXISTS (SELECT 1 FROM pg_roles d WHERE d.rolname IN ('pg_read_all_data','pg_write_all_data',"+
       " 'pg_read_server_files','pg_write_server_files','pg_execute_server_program')"+
       " AND pg_has_role(current_user,d.oid,'member')) AS dangerous_role,"+

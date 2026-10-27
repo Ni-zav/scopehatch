@@ -62,6 +62,13 @@ test('startup rejects table-owner inheritance, identity writes and disabled RLS'
         finally { await admin.query('REVOKE UPDATE ON '+table+' FROM '+qRuntime); }
         await assertRestrictedPgPool(app);
       });
+      await t.test('reject column identity writes on '+table, async () => {
+        const column = table==='scopehatch.memberships' ? 'roles' : 'issuer';
+        await admin.query('GRANT UPDATE('+column+') ON '+table+' TO '+qRuntime);
+        try { await assert.rejects(assertRestrictedPgPool(app),/Refusing privileged/); }
+        finally { await admin.query('REVOKE UPDATE('+column+') ON '+table+' FROM '+qRuntime); }
+        await assertRestrictedPgPool(app);
+      });
     }
     for (const table of ['scopehatch.memberships','scopehatch.tenant_identity_issuers','scopehatch.projects']) {
       await t.test('reject disabled RLS on '+table, async () => {
