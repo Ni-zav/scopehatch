@@ -1,0 +1,13 @@
+.git
+**/.git
+**/node_modules
+**/dist
+**/build
+**/coverage
+.env
+.env.*
+**/.env
+**/.env.*
+deploy/secrets
+**/*.log
+**/*.dump
