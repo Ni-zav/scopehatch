@@ -58,6 +58,7 @@ jobs:
       TEST_PG_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/scopehatch
       TEST_PG_DATABASE: scopehatch
       TEST_PG_APP_URL: postgresql://scopehatch_runtime:runtime_pw_for_github_ci_only_2026@127.0.0.1:5432/scopehatch
+      SCOPEHATCH_CONTEXT_KEY_FILE: /tmp/scopehatch-context-ci-key
       POSTGRES_USER: postgres
       POSTGRES_RUNTIME_USER: scopehatch_runtime
       SCOPEHATCH_RUNTIME_DB_PASSWORD_FILE: /tmp/scopehatch-runtime-ci-password
@@ -72,6 +73,7 @@ jobs:
         run: |
           umask 077
           printf '%s' 'runtime_pw_for_github_ci_only_2026' > "$SCOPEHATCH_RUNTIME_DB_PASSWORD_FILE"
+          openssl rand -hex 32 > "$SCOPEHATCH_CONTEXT_KEY_FILE"
           npm run db:migrate --workspace @scopehatch/persistence
       - name: Assert SQL isolation, write authorization and approval atomics
         run: npm run test:db
@@ -99,8 +101,9 @@ jobs:
           umask 077
           printf '%s' 'scopehatch_integration_admin_ci_pw_2026' > deploy/secrets/postgres_password
           printf '%s' 'scopehatch_integration_runtime_ci_pw_2026' > deploy/secrets/postgres_runtime_password
-          sudo chown 1000:1000 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
-          sudo chmod 0400 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+          openssl rand -hex 32 > deploy/secrets/context_key
+          sudo chown 1000:1000 deploy/secrets/context_key deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+          sudo chmod 0400 deploy/secrets/context_key deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
           cp .env.example .env
           # Only disposable CI config; do not print the generated secret.
           sed -i "s/^SCOPEHATCH_CURSOR_SECRET=$/SCOPEHATCH_CURSOR_SECRET=$(openssl rand -hex 32)/" .env

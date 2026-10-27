@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import {provisionTenant,ConflictError,InputError} from '../bootstrap.mjs';
+import {createContextBinder} from '../../../packages/persistence/identity-context.mjs';
 import {manageIdentity} from '../identity.mjs';
 const url=process.env.TEST_PG_ADMIN_URL;
 test('disposable PG: atomic bootstrap, concurrent idempotency, conflict and restricted-role refusal', {skip:!url && 'requires TEST_PG_ADMIN_URL pointing to disposable PostgreSQL with migrations'}, async()=>{
@@ -36,7 +37,14 @@ test('disposable PG: issuer binding, independent member lifecycle, audit and rol
   const request={tenantId:'identity-'+randomUUID().replaceAll('-','').slice(0,18),workspaceName:'Synthetic Identity Studio',ownerSub:'external|'+randomUUID(),issuer:'https://login.acme.co/',expectedIssuer:'https://login.acme.co/',environment:'development',confirmEnvironment:'development',database:process.env.TEST_PG_DATABASE||'scopehatch_test',verified:true};
   const memberSub='external|'+randomUUID();
   const add={...request,command:'member add',memberSub,role:'reviewer'};
-  const lookup=(issuer,sub=memberSub)=>runtime.query('SELECT * FROM scopehatch.lookup_verified_subject($1,$2)',[sub,issuer]);
+  const bindLookup=createContextBinder('membership');
+  const lookup=async(issuer,sub=memberSub)=>{
+    await runtime.query('BEGIN');
+    try {
+      await bindLookup(runtime,{subject:sub,issuer});
+      return await runtime.query('SELECT * FROM scopehatch.lookup_verified_subject($1,$2)',[sub,issuer]);
+    } finally {await runtime.query('ROLLBACK');}
+  };
   try {
     await provisionTenant(admin,request);
     assert.equal(await manageIdentity(admin,add,{dryRun:true}),'would-be-changed');

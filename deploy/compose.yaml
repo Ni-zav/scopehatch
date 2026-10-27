@@ -64,6 +64,8 @@ services:
     logging: *logging
 
 secrets:
+  context_key:
+    file: ./secrets/context_key
   postgres_password:
     file: ./secrets/postgres_password
   postgres_runtime_password:

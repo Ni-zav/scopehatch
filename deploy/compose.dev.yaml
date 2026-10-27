@@ -10,6 +10,7 @@ x-dev-env: &dev-env
   POSTGRES_USER: ${POSTGRES_RUNTIME_USER:-scopehatch_runtime}
   POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-scopehatch_admin}
   POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-scopehatch_runtime}
+  SCOPEHATCH_CONTEXT_KEY_FILE: /run/secrets/context_key
   OIDC_ISSUER: ${OIDC_ISSUER:?Set OIDC_ISSUER in .env}
   OIDC_AUDIENCE: ${OIDC_AUDIENCE:?Set OIDC_AUDIENCE in .env}
   OIDC_JWKS_URI: ${OIDC_JWKS_URI:?Set OIDC_JWKS_URI in .env}
@@ -42,7 +43,7 @@ services:
     environment:
       <<: *dev-env
       POSTGRES_USER: ${POSTGRES_ADMIN_USER:-scopehatch_admin}
-    secrets: [postgres_password, postgres_runtime_password]
+    secrets: [postgres_password, postgres_runtime_password, context_key]
     networks: [backend]
     depends_on:
       postgres:
@@ -57,7 +58,7 @@ services:
       target: development
     command: [api-dev]
     environment: *dev-env
-    secrets: [postgres_runtime_password]
+    secrets: [postgres_runtime_password, context_key]
     networks: [backend, frontend, egress]
     depends_on:
       migrate:
@@ -81,7 +82,7 @@ services:
       target: development
     command: [worker-dev]
     environment: *dev-env
-    secrets: [postgres_runtime_password]
+    secrets: [postgres_runtime_password, context_key]
     networks: [backend, egress]
     depends_on:
       migrate:

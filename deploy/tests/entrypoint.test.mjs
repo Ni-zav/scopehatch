@@ -9,6 +9,8 @@ const script = resolve(import.meta.dirname, '../scripts/service-entrypoint.mjs')
 const temp = mkdtempSync(join(tmpdir(), 'scopehatch-entry-'));
 const dbSecret = join(temp, 'db');
 const modelSecret = join(temp, 'model');
+const contextSecret = join(temp, 'context');
+writeFileSync(contextSecret, 'ab'.repeat(32), {mode:0o600});
 writeFileSync(dbSecret, 'synthetic-test-only-secret\n', { mode: 0o600 });
 writeFileSync(modelSecret, 'synthetic-test-only-provider-key', { mode: 0o600 });
 writeFileSync(join(temp, 'npm'), '#!/bin/sh\nprintf "ROLE:%s\\n" "$*"\n', { mode: 0o755 });
@@ -17,6 +19,7 @@ process.on('exit', () => rmSync(temp, { recursive: true, force: true }));
 const env = {
   PATH: `${temp}:${process.env.PATH}`,
   POSTGRES_PASSWORD_FILE: dbSecret,
+  SCOPEHATCH_CONTEXT_KEY_FILE: contextSecret,
   PROVIDER_API_KEY_FILE: modelSecret,
   POSTGRES_HOST: 'postgres', POSTGRES_PORT: '5432',
   POSTGRES_DB: 'scopehatch', POSTGRES_USER: 'scopehatch',
@@ -82,4 +85,10 @@ test('migration does not depend on provider credentials', () => {
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /ROLE:run db:migrate --workspace @scopehatch\/persistence/);
+});
+
+test('missing context signing material fails startup without a fallback', () => {
+  const r = run('api', { SCOPEHATCH_CONTEXT_KEY_FILE: join(temp, 'missing-context') });
+  assert.equal(r.status, 78);
+  assert.doesNotMatch(r.stdout, /ROLE:/);
 });

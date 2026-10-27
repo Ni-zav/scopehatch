@@ -47,7 +47,7 @@ export async function manageIdentity(client, input, {dryRun=false}={}) {
       }
     }
     if (changed&&!dryRun) {
-      await client.query("SELECT set_config('scopehatch.tenant_id',$1,true),set_config('scopehatch.actor_id',$2,true)",[data.tenantId,data.ownerSub]);
+      await client.query('SELECT scopehatch.admin_bind_context($1,$2)',[data.tenantId,data.ownerSub]);
       await client.query("INSERT INTO scopehatch.audit_events(tenant_id,id,actor_id,action,request_id,outcome,metadata) VALUES ($1,$2,$3,$4,$5,'succeeded',$6::jsonb)",
         [data.tenantId,randomUUID(),data.ownerSub,'admin.'+data.command.replaceAll(' ','.'),randomUUID(),JSON.stringify({memberSub:data.memberSub??null,role:data.role??null})]);
     }

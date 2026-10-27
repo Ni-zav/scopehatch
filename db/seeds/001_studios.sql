@@ -12,8 +12,7 @@ INSERT INTO scopehatch.memberships(tenant_id,principal_id,roles) VALUES
  ('studio-b','b-reviewer',ARRAY['reviewer'])
 ON CONFLICT (tenant_id,principal_id) DO NOTHING;
 
-SELECT set_config('scopehatch.tenant_id','studio-a',true);
-SELECT set_config('scopehatch.actor_id','a-operator',true);
+SELECT scopehatch.admin_bind_context('studio-a','a-operator');
 DO $seed$
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM scopehatch.catalog_versions
@@ -61,8 +60,7 @@ VALUES ('studio-a','seed-key','a-operator','SEED',
         repeat('a',64),'{"fixture":true}'::jsonb)
 ON CONFLICT (tenant_id,key) DO NOTHING;
 
-SELECT set_config('scopehatch.tenant_id','studio-b',true);
-SELECT set_config('scopehatch.actor_id','b-operator',true);
+SELECT scopehatch.admin_bind_context('studio-b','b-operator');
 DO $seed$
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM scopehatch.catalog_versions
