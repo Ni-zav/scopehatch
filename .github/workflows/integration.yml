@@ -112,6 +112,14 @@ jobs:
           sh deploy/scripts/preflight.sh dev
       - name: Build immutable Docker images
         run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml build
+      - name: Verify runtime image excludes host configuration and credentials
+        run: |
+          docker run --rm --network none --entrypoint node scopehatch-api:local -e '
+            const fs = require("node:fs");
+            for (const path of ["/app/.env", "/app/deploy/secrets", "/app/.git"]) {
+              if (fs.existsSync(path)) throw new Error("Host-only path copied into runtime image: " + path);
+            }
+          '
       - name: Boot restricted Postgres, migration, API, and web
         run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml up -d --wait --wait-timeout 150
       - name: Verify HTTP health and runtime role
