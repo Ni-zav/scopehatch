@@ -8,6 +8,8 @@ import type {
 // The shared JavaScript persistence module retains its own runtime contract.
 // @ts-expect-error JS ESM module is independently shipped without a .d.mts
 import { createPersistence } from '../../../packages/persistence/index.mjs';
+// @ts-expect-error Shared JS transaction attestor.
+import { createContextBinder } from '../../../packages/persistence/identity-context.mjs';
 
 type DbRepo = {
   getProject(id: string): Promise<{id:string;title:string;brief:string;status:string}>;
@@ -141,23 +143,54 @@ export async function assertRestrictedPgPool(pool:Pool):Promise<void> {
   const client=await pool.connect();
   try {
     const result=await client.query(
-      "SELECT current_user AS username, r.rolsuper, r.rolbypassrls, r.rolinherit,"+
+      "SELECT current_user AS username, r.rolsuper, r.rolbypassrls, r.rolinherit, r.rolcreaterole, r.rolcreatedb, r.rolreplication,"+
       " pg_has_role(current_user,'scopehatch_app','member') AS member,"+
       " pg_get_userbyid(c.relowner) AS table_owner,"+
+      " EXISTS (SELECT 1 FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace"+
+      " WHERE n.nspname IN ('scopehatch','scopehatch_private') AND t.relkind IN ('r','p')"+
+      " AND (pg_has_role(current_user,t.relowner,'member') OR NOT t.relrowsecurity"+
+      " OR NOT row_security_active(t.oid) OR (NOT t.relforcerowsecurity"+
+      " AND NOT (n.nspname='scopehatch' AND t.relname='memberships')))) AS unsafe_table,"+
+      " EXISTS (SELECT 1 FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace"+
+      " WHERE n.nspname='scopehatch' AND t.relname IN ('memberships','tenant_identity_issuers')"+
+      " AND (has_table_privilege(current_user,t.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')"+
+      " OR has_any_column_privilege(current_user,t.oid,'INSERT,UPDATE,REFERENCES'))) AS identity_write,"+
+      " EXISTS (SELECT 1 FROM pg_roles d WHERE d.rolname IN ('pg_read_all_data','pg_write_all_data',"+
+      " 'pg_read_server_files','pg_write_server_files','pg_execute_server_program')"+
+      " AND pg_has_role(current_user,d.oid,'member')) AS dangerous_role,"+
+      " EXISTS (SELECT 1 FROM pg_roles d WHERE (d.rolsuper OR d.rolbypassrls OR d.rolcreaterole)"+
+      " AND pg_has_role(current_user,d.oid,'member')) AS privileged_membership,"+
+      " has_function_privilege(current_user,'scopehatch.admin_bind_context(text,text)','EXECUTE') AS signing_oracle,"+
+      " EXISTS (SELECT 1 FROM pg_class k JOIN pg_namespace n ON n.oid=k.relnamespace"+
+      " WHERE n.nspname='scopehatch_private' AND k.relname='context_key'"+
+      " AND has_table_privilege(current_user,k.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')) AS key_access,"+
+      " EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace"+
+      " WHERE n.nspname='scopehatch_private' AND p.proname='context_mac'"+
+      " AND has_function_privilege(current_user,p.oid,'EXECUTE')) AS private_signing_oracle,"+
+      " EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname IN ('scopehatch','scopehatch_private')"+
+      " AND (pg_has_role(current_user,n.nspowner,'member') OR has_schema_privilege(current_user,n.oid,'CREATE'))) AS schema_control,"+
       " row_security_active('scopehatch.projects'::regclass) AS rls_active"+
       " FROM pg_roles r CROSS JOIN pg_class c"+
       " WHERE r.rolname=current_user AND c.oid='scopehatch.projects'::regclass"
     );
     const row=result.rows[0];
     if(!row || row.rolsuper || row.rolbypassrls || !row.rolinherit ||
-       !row.member || row.username===row.table_owner || !row.rls_active) {
+       !row.member || row.username===row.table_owner || !row.rls_active ||
+       row.rolcreaterole || row.rolcreatedb || row.rolreplication || row.dangerous_role ||
+       row.privileged_membership || row.signing_oracle || row.schema_control ||
+       row.key_access || row.private_signing_oracle || row.unsafe_table || row.identity_write) {
       throw new Error('Refusing privileged or RLS-bypassing runtime database identity');
     }
+    await client.query('BEGIN');
+    try {
+      await createContextBinder()(client,{tenantId:'__startup_probe__',id:'__startup_probe__'});
+    } finally {await client.query('ROLLBACK');}
   } finally {client.release();}
 }
 
 export function createPgPorts(pool:Pool):{store:PersistencePort;memberships:MembershipPort} {
   const persistence=createPersistence(pool);
+  const bindIdentity=createContextBinder('membership');
   const store:PersistencePort={
     transaction:(principal,execute)=>persistence.withPrincipal(principal,(repo:DbRepo)=>execute(adapt(repo,principal))),
     idempotent:(principal,input)=>persistence.withPrincipal(principal,async (repo:DbRepo)=>{
@@ -180,8 +213,17 @@ export function createPgPorts(pool:Pool):{store:PersistencePort;memberships:Memb
   const memberships:MembershipPort={
     async findByVerifiedSubject(subject,issuer) {
       if(!subject||subject.length>512||!issuer||issuer.length>2048)return [];
-      const res=await pool.query(
-        'SELECT tenant_id,principal_id,roles,active FROM scopehatch.lookup_verified_subject($1,$2)',[subject,issuer]);
+      const client=await pool.connect();
+      let res;
+      try {
+        await client.query('BEGIN');
+        await bindIdentity(client,{subject,issuer});
+        res=await client.query('SELECT tenant_id,principal_id,roles,active FROM scopehatch.lookup_verified_subject($1,$2)',[subject,issuer]);
+        await client.query('COMMIT');
+      } catch(error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {client.release();}
       return res.rows.map(x=>({
         subject,actorId:x.principal_id,tenantId:x.tenant_id,roles:x.roles,active:x.active
       }));

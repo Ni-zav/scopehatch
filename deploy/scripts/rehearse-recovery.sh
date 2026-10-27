@@ -23,7 +23,7 @@ docker info --format '{{.ServerVersion}}' >/dev/null 2>&1 || {
 # The rehearsal never references COMPOSE_PROJECT_NAME, POSTGRES_DB, or supplied URLs.
 for file in db/migrations/001_initial.sql db/migrations/002_quote_integrity.sql \
   db/migrations/003_immutable_children_usage.sql db/migrations/004_identity_lookup.sql \
-  db/migrations/005_inference_governance.sql db/migrations/006_sprint02_catalog_proposals_projects.sql db/migrations/007_tenant_identity_issuer.sql db/seeds/001_studios.sql \
+  db/migrations/005_inference_governance.sql db/migrations/006_sprint02_catalog_proposals_projects.sql db/migrations/007_tenant_identity_issuer.sql db/migrations/008_verified_transaction_context.sql db/seeds/001_studios.sql \
   db/seeds/002_inference_fixture.sql deploy/tests/recovery-fixture.sql \
   deploy/tests/recovery-integrity.sql; do
   [ -s "$file" ] || { echo "Missing source file: $file" >&2; exit 78; }
@@ -70,7 +70,7 @@ psql_file() {
 migrate() {
   for file in db/migrations/001_initial.sql db/migrations/002_quote_integrity.sql \
     db/migrations/003_immutable_children_usage.sql db/migrations/004_identity_lookup.sql \
-    db/migrations/005_inference_governance.sql db/migrations/006_sprint02_catalog_proposals_projects.sql db/migrations/007_tenant_identity_issuer.sql; do
+    db/migrations/005_inference_governance.sql db/migrations/006_sprint02_catalog_proposals_projects.sql db/migrations/007_tenant_identity_issuer.sql db/migrations/008_verified_transaction_context.sql; do
     psql_file "$1" "$file" >/dev/null
   done
 }
@@ -86,6 +86,13 @@ role_setup() {
         END \$\$;" >/dev/null
   docker exec "$1" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d scopehatch_dr \
     -c 'GRANT scopehatch_app TO scopehatch_rehearsal_runtime' >/dev/null
+  docker exec "$1" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d scopehatch_dr \
+    -c "DO \$\$ BEGIN
+      IF to_regclass('scopehatch_private.context_key') IS NOT NULL THEN
+        INSERT INTO scopehatch_private.context_key(singleton,key)
+        VALUES (true,public.gen_random_bytes(32)) ON CONFLICT DO NOTHING;
+      END IF;
+    END \$\$;" >/dev/null
 }
 fingerprints() {
   c=$1

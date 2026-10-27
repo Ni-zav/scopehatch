@@ -6,6 +6,7 @@
  *
  * Never connect using the migration owner, a superuser, or a BYPASSRLS role.
  */
+import { createContextBinder } from './identity-context.mjs';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   createCatalog as validateCatalog,
@@ -234,6 +235,8 @@ function isUnique(error) { return error?.code === '23505'; }
 export function createPersistence(pool) {
   if (!pool || typeof pool.connect !== 'function') reject('INVALID_INPUT', 'PostgreSQL pool required');
 
+  const bindContext = createContextBinder();
+
   /** principal is issued ONLY by trusted auth middleware; never from HTTP body. */
   async function withPrincipal(principal, work) {
     object(principal, 'verified principal');
@@ -245,8 +248,7 @@ export function createPersistence(pool) {
     try {
       await client.query('BEGIN');
       inTransaction = true;
-      await client.query("SELECT set_config('scopehatch.tenant_id', $1, true)", [tenantId]);
-      await client.query("SELECT set_config('scopehatch.actor_id', $1, true)", [actorId]);
+      await bindContext(client, { tenantId, id: actorId });
       const m = await client.query(
         'SELECT roles FROM scopehatch.memberships WHERE tenant_id = $1 AND principal_id = $2 AND active',
         [tenantId, actorId]

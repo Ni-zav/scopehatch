@@ -1,13 +1,15 @@
+import { createContextBinder } from '../persistence/identity-context.mjs';
 /** Durable PostgreSQL governance port, one serialized account row per tenant. */
 export function createPostgresGovernanceStorage(pool, principal) {
   if (!pool?.connect || !principal?.id || !principal?.tenantId)
     throw new Error('Verified principal and PostgreSQL pool required');
+  const bindContext = createContextBinder();
   async function withTenantTransaction(tenantId, callback) {
     if (tenantId !== principal.tenantId) throw Object.assign(new Error('Tenant mismatch'),{code:'FORBIDDEN'});
     const client=await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query("SELECT set_config('scopehatch.actor_id',$1,true),set_config('scopehatch.tenant_id',$2,true)",[principal.id,tenantId]);
+      await bindContext(client, principal);
       // Every reservation event and account modification is serialized across
       // independent API processes, not just within one Node.js instance.
       await client.query('SELECT tenant_id FROM scopehatch.inference_accounts WHERE tenant_id=$1 FOR UPDATE',[tenantId]);

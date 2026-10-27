@@ -1,3 +1,4 @@
+import { readContextKey } from './identity-context.mjs';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,7 @@ if (!secretPath) throw new Error('Missing runtime credential file path');
 const password = readFileSync(secretPath, 'utf8').replace(/\r?\n$/, '');
 if (!password || password.length < 24) throw new Error('Runtime database password must be at least 24 characters');
 
+const contextKey = readContextKey();
 const pool = new Pool({ connectionString: url, max: 1 });
 const client = await pool.connect();
 try {
@@ -23,15 +25,22 @@ try {
   );
   if (!privileges.rows[0]?.rolsuper && !privileges.rows[0]?.rolcreaterole)
     throw new Error('Migration credentials lack role provisioning permission');
+  const protectedContextInstalled = (await client.query("SELECT to_regclass('scopehatch_private.context_key') IS NOT NULL AS installed")).rows[0].installed;
   for (const name of [
     '001_initial.sql', '002_quote_integrity.sql',
     '003_immutable_children_usage.sql', '004_identity_lookup.sql',
     '005_inference_governance.sql', '006_sprint02_catalog_proposals_projects.sql',
-    '007_tenant_identity_issuer.sql'
+    '007_tenant_identity_issuer.sql', '008_verified_transaction_context.sql'
   ]) {
+    // Never temporarily reinstall the legacy GUC helpers on a protected database.
+    if (protectedContextInstalled && Number(name.slice(0,3)) < 8) continue;
     const sql = await readFile(fileURLToPath(new URL('../../db/migrations/' + name, import.meta.url)), 'utf8');
     await client.query(sql);
   }
+  const installed = await client.query('SELECT key = $1 AS matches FROM scopehatch_private.context_key WHERE singleton', [contextKey]);
+  if (installed.rowCount && installed.rows[0].matches !== true)
+    throw new Error('Context key differs from installed key; explicit reviewed rotation required');
+  await client.query('INSERT INTO scopehatch_private.context_key(singleton,key) VALUES (true,$1) ON CONFLICT(singleton) DO NOTHING', [contextKey]);
   const escaped = '"' + role.replaceAll('"', '""') + '"';
   const exists = await client.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [role]);
   if (!exists.rowCount) await client.query('CREATE ROLE ' + escaped + ' LOGIN INHERIT NOSUPERUSER NOBYPASSRLS');

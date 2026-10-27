@@ -11,6 +11,7 @@ docker compose version >/dev/null 2>&1 || { echo 'Docker Compose v2 not installe
 test -f .env || { echo 'Missing .env (copy .env.example and configure identity)' >&2; exit 78; }
 test -s deploy/secrets/postgres_password || { echo 'Missing/empty deploy/secrets/postgres_password' >&2; exit 78; }
 test -s deploy/secrets/postgres_runtime_password || { echo 'Missing/empty deploy/secrets/postgres_runtime_password' >&2; exit 78; }
+test -s deploy/secrets/context_key || { echo 'Missing/empty deploy/secrets/context_key' >&2; exit 78; }
 if [ "$external" = external ]; then
   test -s deploy/secrets/provider_api_key || { echo 'Missing/empty deploy/secrets/provider_api_key' >&2; exit 78; }
 fi

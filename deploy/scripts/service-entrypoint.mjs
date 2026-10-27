@@ -26,6 +26,8 @@ const readSecret = (path) => {
 };
 let env;
 try {
+  const contextPath = process.env.SCOPEHATCH_CONTEXT_KEY_FILE ?? '/run/secrets/context_key';
+  if (!/^[a-f0-9]{64}$/.test(readSecret(contextPath))) throw new Error('Invalid context key file');
   const dbUser = requireEnv('POSTGRES_USER');
   const dbName = requireEnv('POSTGRES_DB');
   const dbHost = requireEnv('POSTGRES_HOST');
@@ -52,6 +54,7 @@ try {
   }
   env = {
     ...process.env,
+    SCOPEHATCH_CONTEXT_KEY_FILE: contextPath,
     DATABASE_URL: `postgresql://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPass)}@${dbHost}:${dbPort}/${encodeURIComponent(dbName)}`,
     ...(role === 'migrate' ? {
       SCOPEHATCH_RUNTIME_DB_PASSWORD_FILE: '/run/secrets/postgres_runtime_password'

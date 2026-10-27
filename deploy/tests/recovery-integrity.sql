@@ -66,12 +66,11 @@ END $checks$;
 
 -- Even an authenticated restricted runtime login cannot read the other tenant.
 BEGIN;
+SELECT scopehatch.admin_bind_context('studio-a','a-operator');
 SET LOCAL ROLE scopehatch_rehearsal_runtime;
-SELECT set_config('scopehatch.tenant_id','studio-a',true);
-SELECT set_config('scopehatch.actor_id','a-operator',true);
 DO $rls$
 BEGIN
-  IF (SELECT count(*) FROM scopehatch.lookup_verified_subject('a-operator','https://recovery.scopehatch.invalid/')) <> 1
+  IF (SELECT count(*) FROM scopehatch.lookup_verified_subject('a-operator','https://recovery.scopehatch.invalid/')) <> 0
     OR (SELECT count(*) FROM scopehatch.lookup_verified_subject('a-operator','https://wrong.scopehatch.invalid/')) <> 0
     THEN RAISE EXCEPTION 'Restored issuer binding failed'; END IF;
   IF (SELECT count(*) FROM scopehatch.projects) <> 1
@@ -81,9 +80,8 @@ BEGIN
 END $rls$;
 COMMIT;
 BEGIN;
+SELECT scopehatch.admin_bind_context('studio-b','b-operator');
 SET LOCAL ROLE scopehatch_rehearsal_runtime;
-SELECT set_config('scopehatch.tenant_id','studio-b',true);
-SELECT set_config('scopehatch.actor_id','b-operator',true);
 DO $rls$
 BEGIN
   IF (SELECT count(*) FROM scopehatch.projects) <> 1

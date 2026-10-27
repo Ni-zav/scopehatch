@@ -4,8 +4,7 @@ BEGIN;
 INSERT INTO scopehatch.tenant_identity_issuers(tenant_id,issuer) VALUES
  ('studio-a','https://recovery.scopehatch.invalid/'),
  ('studio-b','https://recovery.scopehatch.invalid/');
-SELECT set_config('scopehatch.tenant_id','studio-a',true);
-SELECT set_config('scopehatch.actor_id','a-reviewer',true);
+SELECT scopehatch.admin_bind_context('studio-a','a-reviewer');
 UPDATE scopehatch.reviews SET state='approved', approved_by='a-reviewer', approved_at=now()
 WHERE tenant_id='studio-a' AND project_id='a-demo' AND id='a-review' AND state='pending';
 INSERT INTO scopehatch.audit_events
@@ -13,8 +12,7 @@ INSERT INTO scopehatch.audit_events
 VALUES ('studio-a','rehearsal-approval','a-demo','a-reviewer','proposal.approved',1,
   'rehearsal-approved','succeeded','{"synthetic":true}'::jsonb);
 
-SELECT set_config('scopehatch.tenant_id','studio-b',true);
-SELECT set_config('scopehatch.actor_id','b-operator',true);
+SELECT scopehatch.admin_bind_context('studio-b','b-operator');
 INSERT INTO scopehatch.scope_revisions
   (tenant_id,project_id,revision,intake_revision,author_id,unknowns,line_count)
 VALUES ('studio-b','b-demo',2,1,'b-operator','[]'::jsonb,1);

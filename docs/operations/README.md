@@ -23,15 +23,21 @@ umask 077
 mkdir -p deploy/secrets
 openssl rand -base64 48 > deploy/secrets/postgres_password
 openssl rand -base64 48 > deploy/secrets/postgres_runtime_password
+openssl rand -hex 32 > deploy/secrets/context_key
 # Containers run as UID/GID 1000; file-backed Compose secrets must be readable to that UID.
 # Do not make these files world-readable.
 sudo chown 1000:1000 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
 sudo chmod 0400 deploy/secrets/postgres_password deploy/secrets/postgres_runtime_password
+sudo chown 1000:1000 deploy/secrets/context_key
+sudo chmod 0400 deploy/secrets/context_key
 # Configure the actual OIDC_ISSUER, OIDC_AUDIENCE, OIDC_JWKS_URI,
 # and public PKCE VITE_OIDC_CLIENT_ID / AUTHORIZATION_ENDPOINT / TOKEN_ENDPOINT in .env.
 ```
 
 Never commit `.env`, `deploy/secrets/`, backup dumps, customer text or credentials. The bridge reads Docker secrets into child-process environment; no DB password or provider key is interpolated into Compose YAML. A signed JWT with a configured trusted issuer/audience and **trusted membership records** is mandatory in both dev and prod; there is no magic tenant/role header.
+
+Read [transaction context operations](../security/transaction-context.md) before upgrade, key rotation, or recovery.
+The database dump contains the context signing key. Protect it as signing authority.
 
 ### Infrastructure only (safe while app workstreams are missing)
 

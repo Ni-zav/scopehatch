@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createPersistence } from '../index.mjs';
+import { createContextBinder } from '../identity-context.mjs';
+const bindContext = process.env.TEST_PG_APP_URL ? createContextBinder() : null;
 
 // THIS SUITE DOES NOT USE pg-mem OR A MOCK. Both URLs are mandatory.
 // The admin connection must be allowed to create roles and provision fixtures.
@@ -28,8 +30,12 @@ before(async () => {
     '../../../db/migrations/001_initial.sql',
     '../../../db/migrations/002_quote_integrity.sql',
     '../../../db/migrations/003_immutable_children_usage.sql',
-    '../../../db/seeds/001_studios.sql',
-    '../../../db/migrations/006_sprint02_catalog_proposals_projects.sql'
+    '../../../db/migrations/004_identity_lookup.sql',
+    '../../../db/migrations/005_inference_governance.sql',
+    '../../../db/migrations/006_sprint02_catalog_proposals_projects.sql',
+    '../../../db/migrations/007_tenant_identity_issuer.sql',
+    '../../../db/migrations/008_verified_transaction_context.sql',
+    '../../../db/seeds/001_studios.sql'
   ]) await admin.query(await readFile(path(f), 'utf8'));
   store = createPersistence(app);
   const privilege = await app.query(
@@ -52,8 +58,7 @@ async function direct(principal, work) {
   const c = await app.connect();
   try {
     await c.query('BEGIN');
-    await c.query("SELECT set_config('scopehatch.tenant_id',$1,true)", [principal.tenantId]);
-    await c.query("SELECT set_config('scopehatch.actor_id',$1,true)", [principal.id]);
+    await bindContext(c, principal);
     const result = await work(c);
     await c.query('ROLLBACK');
     return result;
