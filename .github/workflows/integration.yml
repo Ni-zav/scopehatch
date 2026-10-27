@@ -81,6 +81,7 @@ jobs:
         run: node --test tools/onboarding/test/postgres.integration.test.mjs
       - name: Postgres and Fastify integration checks
         run: |
+          node --experimental-transform-types --test apps/api/test/context-startup.test.ts
           node --experimental-transform-types --test apps/api/test/postgres.test.ts
           node --experimental-transform-types --test apps/api/test/inference.test.ts
           npm run build --workspace @scopehatch/sdk
@@ -114,7 +115,7 @@ jobs:
           sh deploy/scripts/preflight.sh prod
           sh deploy/scripts/preflight.sh dev
       - name: Build immutable Docker images
-        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml build
+        run: docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.prod.yaml build api web
       - name: Verify runtime image excludes host configuration and credentials
         run: |
           docker run --rm --network none --entrypoint node scopehatch-api:local -e '

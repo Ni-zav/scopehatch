@@ -8,6 +8,10 @@ Run `sh deploy/scripts/rehearse-recovery.sh` from the repository root. It tests 
 
 ## Logical backup
 
+Migration 008 stores a signing key in the private database schema.
+A full dump includes this key and must receive equivalent protection.
+Follow [key recovery and rotation](../security/transaction-context.md) before restarting a restored application.
+
 Run from the repository root on an authenticated Docker host:
 
 ```sh

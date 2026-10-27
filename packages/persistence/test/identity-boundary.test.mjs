@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { Pool } from 'pg';
-import { createContextBinder } from '../identity-context.mjs';
+import { createContextBinder, readContextKey } from '../identity-context.mjs';
 import { createPersistence } from '../index.mjs';
 
 const enabled = Boolean(process.env.TEST_PG_ADMIN_URL && process.env.TEST_PG_APP_URL);
@@ -87,6 +87,20 @@ test('arbitrary runtime SQL cannot select another identity, forge authority or r
       await c.query('ROLLBACK');
       await c.query('RESET scopehatch.identity');
       await c.query('RESET scopehatch.identity_mac');
+    });
+    await t.test('valid MAC cannot bypass connection, transaction, database, login or server-start binding', async () => {
+      await c.query('BEGIN'); await bind(c,a);
+      const original = await context(c);
+      for (const field of ['tx','pid','db','login','start']) {
+        // A privileged fixture signs stale metadata to isolate each verifier check.
+        const payload = JSON.stringify({...JSON.parse(original.payload),[field]:'stale'});
+        const mac = createHmac('sha256',readContextKey()).update('scopehatch/context/v1:'+payload).digest('hex');
+        await install(c,{payload,mac});
+        assert.equal((await c.query('SELECT scopehatch.verified_context() IS NULL AS denied')).rows[0].denied,true,field);
+      }
+      await install(c,original);
+      assert.equal(await count(c,a.tenantId),1);
+      await c.query('ROLLBACK');
     });
     await t.test('membership discovery is bound to verified subject and issuer, with no row authority', async () => {
       await c.query('BEGIN');

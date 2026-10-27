@@ -149,6 +149,17 @@ export async function assertRestrictedPgPool(pool:Pool):Promise<void> {
       " EXISTS (SELECT 1 FROM pg_roles d WHERE d.rolname IN ('pg_read_all_data','pg_write_all_data',"+
       " 'pg_read_server_files','pg_write_server_files','pg_execute_server_program')"+
       " AND pg_has_role(current_user,d.oid,'member')) AS dangerous_role,"+
+      " EXISTS (SELECT 1 FROM pg_roles d WHERE (d.rolsuper OR d.rolbypassrls OR d.rolcreaterole)"+
+      " AND pg_has_role(current_user,d.oid,'member')) AS privileged_membership,"+
+      " has_function_privilege(current_user,'scopehatch.admin_bind_context(text,text)','EXECUTE') AS signing_oracle,"+
+      " EXISTS (SELECT 1 FROM pg_class k JOIN pg_namespace n ON n.oid=k.relnamespace"+
+      " WHERE n.nspname='scopehatch_private' AND k.relname='context_key'"+
+      " AND has_table_privilege(current_user,k.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')) AS key_access,"+
+      " EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace"+
+      " WHERE n.nspname='scopehatch_private' AND p.proname='context_mac'"+
+      " AND has_function_privilege(current_user,p.oid,'EXECUTE')) AS private_signing_oracle,"+
+      " EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname IN ('scopehatch','scopehatch_private')"+
+      " AND (pg_has_role(current_user,n.nspowner,'member') OR has_schema_privilege(current_user,n.oid,'CREATE'))) AS schema_control,"+
       " row_security_active('scopehatch.projects'::regclass) AS rls_active"+
       " FROM pg_roles r CROSS JOIN pg_class c"+
       " WHERE r.rolname=current_user AND c.oid='scopehatch.projects'::regclass"
@@ -156,7 +167,9 @@ export async function assertRestrictedPgPool(pool:Pool):Promise<void> {
     const row=result.rows[0];
     if(!row || row.rolsuper || row.rolbypassrls || !row.rolinherit ||
        !row.member || row.username===row.table_owner || !row.rls_active ||
-       row.rolcreaterole || row.rolcreatedb || row.rolreplication || row.dangerous_role) {
+       row.rolcreaterole || row.rolcreatedb || row.rolreplication || row.dangerous_role ||
+       row.privileged_membership || row.signing_oracle || row.schema_control ||
+       row.key_access || row.private_signing_oracle) {
       throw new Error('Refusing privileged or RLS-bypassing runtime database identity');
     }
     await client.query('BEGIN');

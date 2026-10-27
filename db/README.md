@@ -70,7 +70,7 @@ The persistence package independently reads active roles from PostgreSQL;
 it does not trust role claims from the caller or any HTTP body. Do not
 expose a raw SQL connection through the API.
 
-Every withPrincipal invocation runs BEGIN, SET LOCAL tenant/actor, a
+Every withPrincipal invocation runs BEGIN, authenticated transaction context, a
 membership check, the scoped operation, and COMMIT or ROLLBACK. The pooled
 client is released afterwards; session context cannot bleed to the next
 request. All tenant-owned tables have tenant-scoped RLS. Nearly all have
@@ -103,17 +103,15 @@ credentials or personally identifying client assets there.
 
 ## Security limitations
 
-RLS checks both transaction tenant and authenticated membership. It
-prevents direct cross-tenant SQL reads and writes **when the trusted session
-context cannot be changed**. PostgreSQL custom configuration parameters
-used here (scopehatch.tenant_id and scopehatch.actor_id) are writable by
-SQL under the application account. Thus an attacker with arbitrary SQL
-execution under the shared app login could change BOTH to impersonate another
-known active membership. This is NOT a fully injection-resistant tenant
-boundary. The API must only use parameterized repository queries and never
-expose arbitrary SQL. For a stricter threat model, the integrator should
-add database-verified signed transaction attestation or isolated tenant
-database credentials before calling this production secure.
+Migration 008 requires database-verified HMAC transaction attestations.
+Writable legacy tenant and actor settings no longer grant authority.
+Membership discovery requires a separately signed purpose, subject, and issuer.
+The runtime login must not read the private key or execute the administrator signing helper.
+Read [the threat model and key operations](../docs/security/transaction-context.md) before installation or recovery.
+Independent security review is required before merge or release.
+Arbitrary SQL can still damage its authorized scope or cause denial of service.
+Application-process compromise, key theft, and database-administrator compromise remain outside this boundary.
+Keep parameterized queries and never expose arbitrary SQL.
 
 Other limitations: no production identity provisioner, budget ledger
 reconciliation, operational migration runner, backup/restore or incident plan,
